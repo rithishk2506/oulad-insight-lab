@@ -374,9 +374,31 @@ def prediction(folder):
         st.download_button("Download comparison",res.to_csv(index=False).encode(),"regression_comparison.csv","text/csv")
 
 def main():
-    st.sidebar.markdown("### ◈ OULAD INSIGHT LAB")
-    st.sidebar.caption("STUDENT LEARNING ANALYTICS")
-    st.sidebar.markdown("---")
+    st.markdown("""
+    <style>
+    .courseiq-brand{display:flex;align-items:center;gap:15px;margin:0 0 .5rem 0}
+    .courseiq-monogram{width:58px;height:58px;flex:0 0 58px;border-radius:15px;
+      display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0d233a,#173b50);
+      border:1px solid #28536a;color:#38d7d0;font-size:25px;font-weight:850;letter-spacing:-3px}
+    .courseiq-monogram span{color:#38d7d0}
+    .courseiq-title{font-size:2.05rem;line-height:1.05;font-weight:800;letter-spacing:-.04em;color:#f4f8fc}
+    .courseiq-by{font-size:.83rem;color:#a9b9cb;margin-top:5px;letter-spacing:.04em}
+    .courseiq-subtitle{color:#a9b9cb;font-size:.93rem;margin:.25rem 0 1.15rem 0}
+    .courseiq-nav-label{font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;color:#7f96ad;font-weight:700;margin:.5rem 0 .35rem 0}
+    div[data-testid="stRadio"] > div[role="radiogroup"]{gap:.45rem;flex-wrap:wrap}
+    div[data-testid="stRadio"] > div[role="radiogroup"] label{background:#111d2d;border:1px solid #263a52;border-radius:10px;padding:.48rem .85rem;margin:0}
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked){background:#123b50;border-color:#25c9c7;color:#f5ffff}
+    div[data-testid="stRadio"] > div[role="radiogroup"] label p{font-weight:600;font-size:.88rem}
+    .team-footer{margin-top:3rem;padding:1.2rem 1rem;border-top:1px solid #263750;text-align:center;color:#9aabc2;font-size:.88rem}
+    .team-footer .names{color:#edf3fc;font-weight:600;margin-top:.35rem;letter-spacing:.02em}
+    </style>
+    <div class="courseiq-brand">
+      <div class="courseiq-monogram"><span>R</span><span>H</span><span>S</span></div>
+      <div><div class="courseiq-title">CourseIQ</div><div class="courseiq-by">by Mining Minds</div></div>
+    </div>
+    <div class="courseiq-subtitle">Data-Driven Course Recommendation System · OULAD Dataset</div>
+    """, unsafe_allow_html=True)
+    st.markdown("---")
 
     # Automatically load repository data in Streamlit Cloud; local/upload modes remain available.
     @st.cache_data(show_spinner=False, max_entries=2)
@@ -513,10 +535,15 @@ def main():
     if st.sidebar.button("Clear cache"):
         st.cache_data.clear()
         st.rerun()
-    st.sidebar.markdown("#### WORKSPACE")
-    page=st.sidebar.radio("Navigate to",["Overview","Clustering","Classification","Association Rules","Prediction"],label_visibility="collapsed")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("OULAD · INTERACTIVE MODEL LAB")
+    st.markdown('<div class="courseiq-nav-label">Explore CourseIQ</div>', unsafe_allow_html=True)
+    page = st.radio(
+        "Navigate to",
+        ["Overview", "Clustering", "Classification", "Association Rules", "Prediction"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="courseiq_top_navigation",
+    )
+    st.markdown("---")
     if page=="Overview":
         st.markdown("<div class='hero'><div class='eyebrow'>STUDENT LEARNING ANALYTICS · PROJECT WORKSPACE</div><div class='hero-title'>OULAD Insight Lab</div><p class='hero-copy'>Turn virtual learning activity into interpretable insights. Explore engagement segments, compare classification models, discover activity patterns, and estimate assessment performance.</p></div>",unsafe_allow_html=True)
         required=["studentInfo.csv","studentVle.csv","vle.csv","assessments.csv","studentAssessment.csv"]
@@ -554,13 +581,10 @@ def main():
 
 
     st.markdown("""
-    <style>
-    .team-footer{margin-top:3rem;padding:1.2rem 1rem;border-top:1px solid #263750;text-align:center;color:#9aabc2;font-size:.88rem}
-    .team-footer .names{color:#edf3fc;font-weight:600;margin-top:.35rem;letter-spacing:.02em}
-    </style>
     <div class="team-footer">
-      <div>OULAD Insight Lab · Data Warehousing and Data Mining Project</div>
+      <div>CourseIQ · Data Warehousing and Data Mining Project</div>
       <div class="names">Rithish K · Hemanathan R · Sarika Vadakkepat</div>
+      <div style="font-size:.76rem;margin-top:.35rem;color:#7f96ad">by Mining Minds</div>
     </div>
     """, unsafe_allow_html=True)
 
