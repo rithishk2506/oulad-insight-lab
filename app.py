@@ -451,88 +451,247 @@ def dataset_overview(folder):
 
 def olap_workspace(folder):
     st.title("OLAP Operations")
-    st.caption("Perform Roll-up, Drill-down, Slice, Dice, and Pivot interactively on a selected dataset.")
-    st.write("OLAP (Online Analytical Processing) summarizes and reshapes data to support multidimensional analysis. Choose a table, dimensions, and measure; the result is computed from the selected CSV.")
+    st.caption("Choose an OLAP operation first, then provide only the attributes needed for that operation.")
+    st.write(
+        "OLAP (Online Analytical Processing) summarizes and reshapes data for multidimensional analysis. "
+        "The controls below change based on the operation you select."
+    )
+
+    # Step 1: Ask for the operation before asking for operation-specific attributes.
+    op = st.selectbox(
+        "1. Which OLAP operation would you like to perform?",
+        ["Roll-up", "Drill-down", "Slice", "Dice", "Pivot"],
+        key="olap_operation"
+    )
+
+    explanations = {
+        "Roll-up": "Summarize detailed records at a higher level. Choose the dimension(s), numeric measure (or record count), and aggregation.",
+        "Drill-down": "Move from a broader summary to a more detailed breakdown. Choose a starting dimension and an additional detail dimension.",
+        "Slice": "Filter the dataset to one selected value of a single dimension, then summarize the remaining data.",
+        "Dice": "Filter by values across multiple dimensions to create a smaller multidimensional subset.",
+        "Pivot": "Compare a measure across two dimensions, placing one dimension in rows and the other in columns."
+    }
+    st.info(explanations[op])
+
     if not folder:
         st.info("Select a dataset source in the sidebar first.")
         return
+
     p = Path(folder)
-    options = [n for n in ["studentInfo.csv", "studentAssessment.csv", "assessments.csv", "vle.csv", "courses.csv", "studentRegistration.csv"] if (p/n).exists()]
+    options = [
+        n for n in [
+            "studentInfo.csv", "studentAssessment.csv", "assessments.csv",
+            "vle.csv", "courses.csv", "studentRegistration.csv"
+        ] if (p / n).exists()
+    ]
     if not options:
         st.warning("No supported CSV tables are available.")
         return
-    table = st.selectbox("1. Select source table", options, key="olap_table")
-    # Read a manageable source table. The very large interaction file is excluded from this
-    # generic interactive workspace to prevent another CPU/RAM spike on Community Cloud.
+
+    # Step 2: Select the source data after the operation is known.
+    table = st.selectbox("2. Select source table", options, key="olap_table")
     if table == "studentVle.csv":
-        st.warning("The raw studentVle.csv table is intentionally excluded from interactive full-table OLAP here because it can be several GB. Use the ETL aggregated warehouse output for large-scale interaction OLAP.")
+        st.warning(
+            "The raw studentVle.csv table is intentionally excluded from interactive full-table OLAP "
+            "because it can be several GB. Use an aggregated warehouse output for large-scale interaction OLAP."
+        )
         return
+
     try:
-        df = pd.read_csv(p/table, low_memory=False)
+        df = pd.read_csv(p / table, low_memory=False)
     except Exception as exc:
         st.error(f"Unable to load table: {exc}")
         return
     if df.empty:
         st.warning("The selected table is empty.")
         return
-    numeric_cols = list(df.select_dtypes(include=np.number).columns)
+
     all_cols = list(df.columns)
-    c1, c2 = st.columns(2)
-    with c1:
-        dims = st.multiselect("2. Dimension(s) — group/filter by these attributes", all_cols, default=all_cols[:1], key="olap_dims")
-    with c2:
-        measure = st.selectbox("3. Measure — numeric attribute to aggregate", ["Record count"] + numeric_cols, key="olap_measure")
-    agg = st.selectbox("Aggregation function", ["Sum", "Mean", "Count", "Minimum", "Maximum"], key="olap_agg")
-    op = st.selectbox("4. OLAP operation", ["Roll-up", "Drill-down", "Slice", "Dice", "Pivot"], key="olap_operation")
-    st.markdown("#### What this operation means")
-    explanations = {
-        "Roll-up": "Aggregate detailed records into groups at a higher level. Select one or more dimensions; the selected measure is summarized for each group.",
-        "Drill-down": "Inspect a more detailed breakdown. Add additional dimensions (for example, group by both course and presentation instead of course alone).",
-        "Slice": "Filter the table to one value of a single dimension, then summarize the remaining records.",
-        "Dice": "Apply value filters to multiple dimensions to create a smaller multidimensional subset.",
-        "Pivot": "Rearrange row and column dimensions to compare the measure across two dimensions."
-    }
-    st.info(explanations[op])
+    numeric_cols = list(df.select_dtypes(include=np.number).columns)
+    if not all_cols:
+        st.warning("The selected table has no attributes.")
+        return
+
+    # Attribute controls are specific to the selected operation.
+    dims = []
+    measure = "Record count"
+    agg = "Count"
     filters = {}
-    if op in ("Slice", "Dice"):
-        filter_dims = dims if op == "Dice" else dims[:1]
-        if not filter_dims:
-            st.warning("Choose at least one dimension to filter.")
+    row_dim = None
+    col_dim = None
+
+    st.markdown("#### 3. Configure the selected operation")
+
+    if op == "Roll-up":
+        dims = st.multiselect(
+            "Dimension attribute(s) to group by",
+            all_cols,
+            default=all_cols[:1],
+            key="olap_rollup_dims"
+        )
+        measure = st.selectbox(
+            "Measure to summarize",
+            ["Record count"] + numeric_cols,
+            key="olap_rollup_measure"
+        )
+        agg = st.selectbox(
+            "Aggregation function",
+            ["Sum", "Mean", "Count", "Minimum", "Maximum"],
+            key="olap_rollup_agg"
+        )
+
+    elif op == "Drill-down":
+        broad_dim = st.selectbox(
+            "Starting (higher-level) dimension",
+            all_cols,
+            index=0,
+            key="olap_drill_broad"
+        )
+        detail_choices = [c for c in all_cols if c != broad_dim]
+        if not detail_choices:
+            st.warning("This table needs at least two attributes to perform a drill-down.")
+            return
+        detail_dim = st.selectbox(
+            "Additional detail dimension",
+            detail_choices,
+            key="olap_drill_detail"
+        )
+        dims = [broad_dim, detail_dim]
+        measure = st.selectbox(
+            "Measure to summarize",
+            ["Record count"] + numeric_cols,
+            key="olap_drill_measure"
+        )
+        agg = st.selectbox(
+            "Aggregation function",
+            ["Sum", "Mean", "Count", "Minimum", "Maximum"],
+            key="olap_drill_agg"
+        )
+
+    elif op == "Slice":
+        slice_dim = st.selectbox("Dimension to slice", all_cols, key="olap_slice_dim")
+        slice_values = sorted(df[slice_dim].dropna().astype(str).unique().tolist())[:500]
+        selected_value = st.selectbox(
+            f"Value to keep from {slice_dim}",
+            slice_values,
+            key="olap_slice_value"
+        ) if slice_values else None
+        if selected_value is not None:
+            filters[slice_dim] = [selected_value]
+        dims = st.multiselect(
+            "Attributes to group the filtered results by",
+            [c for c in all_cols if c != slice_dim],
+            default=[c for c in all_cols if c != slice_dim][:1],
+            key="olap_slice_group"
+        )
+        measure = st.selectbox(
+            "Measure to summarize",
+            ["Record count"] + numeric_cols,
+            key="olap_slice_measure"
+        )
+        agg = st.selectbox(
+            "Aggregation function",
+            ["Sum", "Mean", "Count", "Minimum", "Maximum"],
+            key="olap_slice_agg"
+        )
+
+    elif op == "Dice":
+        filter_dims = st.multiselect(
+            "Dimensions to filter (choose two or more for a multidimensional dice)",
+            all_cols,
+            default=all_cols[:min(2, len(all_cols))],
+            key="olap_dice_dims"
+        )
         for d in filter_dims:
-            vals = df[d].dropna().astype(str).unique().tolist()
-            vals = sorted(vals)[:500]
-            selected = st.multiselect(f"Filter {d}", vals, default=[], key=f"olap_filter_{d}")
+            vals = sorted(df[d].dropna().astype(str).unique().tolist())[:500]
+            selected = st.multiselect(
+                f"Values to keep for {d} (leave empty to include all values)",
+                vals,
+                default=[],
+                key=f"olap_dice_filter_{d}"
+            )
             if selected:
                 filters[d] = selected
-    row_dim = st.selectbox("Pivot row dimension", dims or all_cols, key="olap_row_dim") if op == "Pivot" else None
-    col_choices = [c for c in (dims or all_cols) if c != row_dim]
-    col_dim = st.selectbox("Pivot column dimension", col_choices or all_cols, key="olap_col_dim") if op == "Pivot" else None
+        dims = st.multiselect(
+            "Dimensions for the diced result",
+            all_cols,
+            default=filter_dims[:2],
+            key="olap_dice_group"
+        )
+        measure = st.selectbox(
+            "Measure to summarize",
+            ["Record count"] + numeric_cols,
+            key="olap_dice_measure"
+        )
+        agg = st.selectbox(
+            "Aggregation function",
+            ["Sum", "Mean", "Count", "Minimum", "Maximum"],
+            key="olap_dice_agg"
+        )
+
+    elif op == "Pivot":
+        if len(all_cols) < 2:
+            st.warning("Pivot requires at least two dimension attributes.")
+            return
+        row_dim = st.selectbox("Row dimension", all_cols, key="olap_pivot_row")
+        col_choices = [c for c in all_cols if c != row_dim]
+        col_dim = st.selectbox("Column dimension", col_choices, key="olap_pivot_col")
+        if not numeric_cols:
+            st.warning("Pivot requires at least one numeric measure in the selected table.")
+            return
+        measure = st.selectbox("Numeric measure", numeric_cols, key="olap_pivot_measure")
+        agg = st.selectbox(
+            "Aggregation function",
+            ["Sum", "Mean", "Count", "Minimum", "Maximum"],
+            key="olap_pivot_agg"
+        )
+
     if st.button("Run OLAP operation", type="primary", key="run_olap"):
         result = df.copy()
         for d, vals in filters.items():
             result = result[result[d].astype(str).isin(vals)]
+
         st.metric("Records after filters", f"{len(result):,}")
+        aggfunc = {
+            "Sum": "sum", "Mean": "mean", "Count": "count",
+            "Minimum": "min", "Maximum": "max"
+        }[agg]
+
         if op == "Pivot":
-            if not numeric_cols:
-                st.warning("Pivot requires a numeric measure.")
-                return
-            actual_measure = measure if measure != "Record count" else numeric_cols[0]
-            aggfunc = {"Sum":"sum","Mean":"mean","Count":"count","Minimum":"min","Maximum":"max"}[agg]
-            pivot = pd.pivot_table(result, index=row_dim, columns=col_dim, values=actual_measure, aggfunc=aggfunc, fill_value=0)
+            pivot = pd.pivot_table(
+                result,
+                index=row_dim,
+                columns=col_dim,
+                values=measure,
+                aggfunc=aggfunc,
+                fill_value=0
+            )
             st.subheader("Pivot result")
             st.dataframe(pivot, use_container_width=True)
-            st.download_button("Download OLAP result", pivot.to_csv().encode(), "olap_pivot.csv", "text/csv")
-        elif not dims:
-            st.warning("Select at least one dimension.")
+            st.download_button(
+                "Download OLAP result",
+                pivot.to_csv().encode(),
+                "olap_pivot.csv",
+                "text/csv"
+            )
         else:
+            if not dims:
+                st.warning("Select at least one dimension attribute for the result.")
+                return
             if measure == "Record count":
-                result = result.groupby(dims, dropna=False).size().reset_index(name="Record count")
+                output = result.groupby(dims, dropna=False).size().reset_index(name="Record count")
             else:
-                aggfunc = {"Sum":"sum","Mean":"mean","Count":"count","Minimum":"min","Maximum":"max"}[agg]
-                result = result.groupby(dims, dropna=False)[measure].agg(aggfunc).reset_index(name=f"{agg} of {measure}")
+                output = result.groupby(dims, dropna=False)[measure].agg(aggfunc).reset_index(
+                    name=f"{agg} of {measure}"
+                )
             st.subheader(f"{op} result")
-            st.dataframe(result, use_container_width=True, hide_index=True)
-            st.download_button("Download OLAP result", result.to_csv(index=False).encode(), "olap_result.csv", "text/csv")
+            st.dataframe(output, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download OLAP result",
+                output.to_csv(index=False).encode(),
+                "olap_result.csv",
+                "text/csv"
+            )
 
 def _render_star_schema(title, subtitle, fact_name, fact_description, dimensions, accent="#35d5cc"):
     """Render a self-contained SVG star-schema diagram in Streamlit."""
