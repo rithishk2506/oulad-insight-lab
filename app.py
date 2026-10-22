@@ -140,47 +140,163 @@ def clustering(folder):
 def classifier(folder):
     st.title("Classification workbench")
     st.caption("Train selected algorithms on the same student-grouped holdout split.")
-    chosen=st.multiselect("Algorithms",["Dummy baseline","Decision Tree","Random Forest","Extra Trees","Logistic Regression","KNN"],["Dummy baseline","Decision Tree","Random Forest"])
-    testpct=st.slider("Test split (%)",10,35,20,5)
-    trees=st.select_slider("Ensemble trees",options=[100,200,300,500],value=300)
-    depth=st.selectbox("Tree maximum depth",["Unlimited",5,10,15,20])
-    if st.button("Train and compare classifiers",type="primary"):
-        # A newly trained model set invalidates any prediction made with the previous set.
-        st.session_state.pop("new_student_prediction", None)
-        df=load_engagement(folder)
-        cols=["gender","region","highest_education","imd_band","age_band","num_of_prev_attempts","studied_credits","disability","code_module","code_presentation","total_clicks","active_days","unique_resources"]
-        frame=df[cols+["final_result","id_student"]].copy().dropna(subset=["final_result"])
-        y=frame.pop("final_result").astype(str);groups=frame.pop("id_student")
-        for col in frame.select_dtypes(include="object").columns: frame[col]=frame[col].fillna("Unknown")
-        frame=pd.get_dummies(frame,dummy_na=True)
-        for col in frame.columns: frame[col]=pd.to_numeric(frame[col],errors="coerce").fillna(0)
-        train,test=next(GroupShuffleSplit(n_splits=1,test_size=testpct/100,random_state=42).split(frame,y,groups))
-        Xtr,Xte=frame.iloc[train],frame.iloc[test];ytr,yte=y.iloc[train],y.iloc[test]
-        d=None if depth=="Unlimited" else int(depth); models={}; preds=[]; rows=[]
-        for name in chosen:
-            if name=="Dummy baseline": model=DummyClassifier(strategy="most_frequent")
-            elif name=="Decision Tree": model=DecisionTreeClassifier(max_depth=d,min_samples_leaf=5,class_weight="balanced",random_state=42)
-            elif name=="Random Forest": model=RandomForestClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced_subsample",n_jobs=-1,random_state=42)
-            elif name=="Extra Trees": model=ExtraTreesClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced",n_jobs=-1,random_state=42)
-            elif name=="Logistic Regression": model=LogisticRegression(max_iter=1000,class_weight="balanced")
-            else: model=make_pipeline(StandardScaler(with_mean=False),KNeighborsClassifier(n_neighbors=5,weights="distance"))
-            model.fit(Xtr,ytr); pred=model.predict(Xte);models[name]=model
-            rows.append({"Algorithm":name,"Accuracy":accuracy_score(yte,pred),"Macro-F1":f1_score(yte,pred,average="macro",zero_division=0),"Macro-Precision":__import__("sklearn.metrics").metrics.precision_score(yte,pred,average="macro",zero_division=0),"Macro-Recall":__import__("sklearn.metrics").metrics.recall_score(yte,pred,average="macro",zero_division=0)})
-        res=pd.DataFrame(rows).sort_values("Macro-F1",ascending=False)
-        st.dataframe(res.style.format({c:"{:.3f}" for c in ["Accuracy","Macro-F1","Macro-Precision","Macro-Recall"]}),use_container_width=True,hide_index=True)
-        st.plotly_chart(stylefig(px.bar(res.melt(id_vars="Algorithm",value_vars=["Accuracy","Macro-F1"],var_name="Metric",value_name="Score"),x="Algorithm",y="Score",color="Metric",barmode="group",title="Classifier comparison")),use_container_width=True)
-        st.session_state["classification_models"] = {
-            "models": models, "columns": list(Xtr.columns), "features": cols,
-            "classes": sorted(y.unique().tolist())
-        }
-        selected=st.selectbox("Confusion matrix model",list(models))
-        pred=models[selected].predict(Xte); labels=["Distinction","Fail","Pass","Withdrawn"]
-        cm=confusion_matrix(yte,pred,labels=labels)
-        st.plotly_chart(stylefig(px.imshow(cm,x=labels,y=labels,text_auto=True,color_continuous_scale="Teal",title=selected+" · confusion matrix",labels={"x":"Predicted","y":"Actual","color":"Count"})),use_container_width=True)
-        if hasattr(models[selected],"feature_importances_"):
-            imp=pd.DataFrame({"Feature":Xtr.columns,"Importance":models[selected].feature_importances_}).nlargest(15,"Importance")
-            st.plotly_chart(stylefig(px.bar(imp.sort_values("Importance"),x="Importance",y="Feature",orientation="h",title="Feature importance")),use_container_width=True)
-        st.download_button("Download comparison",res.to_csv(index=False).encode(),"classification_comparison.csv","text/csv")
+
+    chosen = st.multiselect(
+        "Algorithms",
+        ["Dummy baseline", "Decision Tree", "Random Forest", "Extra Trees", "Logistic Regression", "KNN"],
+        ["Dummy baseline", "Decision Tree", "Random Forest"],
+        key="classifier_algorithms"
+    )
+    testpct = st.slider("Test split (%)", 10, 35, 20, 5, key="classifier_test_split")
+    trees = st.select_slider("Ensemble trees", options=[100, 200, 300, 500], value=300, key="classifier_trees")
+    depth = st.selectbox("Tree maximum depth", ["Unlimited", 5, 10, 15, 20], key="classifier_depth")
+
+    if st.button("Train and compare classifiers", type="primary", key="train_classifiers"):
+        if not chosen:
+            st.warning("Select at least one classification algorithm.")
+        else:
+            try:
+                # Clear stale results only when the user explicitly starts a new training run.
+                st.session_state.pop("new_student_prediction", None)
+                df = load_engagement(folder)
+                cols = [
+                    "gender", "region", "highest_education", "imd_band", "age_band",
+                    "num_of_prev_attempts", "studied_credits", "disability",
+                    "code_module", "code_presentation", "total_clicks",
+                    "active_days", "unique_resources"
+                ]
+                frame = df[cols + ["final_result", "id_student"]].copy().dropna(subset=["final_result"])
+                y = frame.pop("final_result").astype(str)
+                groups = frame.pop("id_student")
+                for col in frame.select_dtypes(include="object").columns:
+                    frame[col] = frame[col].fillna("Unknown")
+                frame = pd.get_dummies(frame, dummy_na=True)
+                for col in frame.columns:
+                    frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0)
+
+                train, test = next(
+                    GroupShuffleSplit(n_splits=1, test_size=testpct / 100, random_state=42).split(frame, y, groups)
+                )
+                Xtr, Xte = frame.iloc[train], frame.iloc[test]
+                ytr, yte = y.iloc[train], y.iloc[test]
+                d = None if depth == "Unlimited" else int(depth)
+                models, rows = {}, []
+
+                for name in chosen:
+                    if name == "Dummy baseline":
+                        model = DummyClassifier(strategy="most_frequent")
+                    elif name == "Decision Tree":
+                        model = DecisionTreeClassifier(
+                            max_depth=d, min_samples_leaf=5, class_weight="balanced", random_state=42
+                        )
+                    elif name == "Random Forest":
+                        model = RandomForestClassifier(
+                            n_estimators=trees, max_depth=d, min_samples_leaf=5,
+                            class_weight="balanced_subsample", n_jobs=-1, random_state=42
+                        )
+                    elif name == "Extra Trees":
+                        model = ExtraTreesClassifier(
+                            n_estimators=trees, max_depth=d, min_samples_leaf=5,
+                            class_weight="balanced", n_jobs=-1, random_state=42
+                        )
+                    elif name == "Logistic Regression":
+                        model = LogisticRegression(max_iter=1000, class_weight="balanced")
+                    else:
+                        model = make_pipeline(
+                            StandardScaler(with_mean=False),
+                            KNeighborsClassifier(n_neighbors=5, weights="distance")
+                        )
+                    model.fit(Xtr, ytr)
+                    pred = model.predict(Xte)
+                    models[name] = model
+                    rows.append({
+                        "Algorithm": name,
+                        "Accuracy": accuracy_score(yte, pred),
+                        "Macro-F1": f1_score(yte, pred, average="macro", zero_division=0),
+                        "Macro-Precision": __import__("sklearn.metrics").metrics.precision_score(
+                            yte, pred, average="macro", zero_division=0
+                        ),
+                        "Macro-Recall": __import__("sklearn.metrics").metrics.recall_score(
+                            yte, pred, average="macro", zero_division=0
+                        )
+                    })
+
+                res = pd.DataFrame(rows).sort_values("Macro-F1", ascending=False)
+                # Keep trained outputs in session state so changing the confusion-matrix dropdown
+                # causes a normal Streamlit rerun without erasing the results.
+                st.session_state["classification_results"] = {
+                    "models": models,
+                    "X_test": Xte,
+                    "y_test": yte,
+                    "X_train_columns": list(Xtr.columns),
+                    "comparison": res,
+                    "labels": sorted(y.unique().tolist()),
+                    "settings": {"algorithms": chosen, "test_split": testpct, "trees": trees, "depth": depth}
+                }
+                st.session_state["classification_models"] = {
+                    "models": models,
+                    "columns": list(Xtr.columns),
+                    "features": cols,
+                    "classes": sorted(y.unique().tolist())
+                }
+            except Exception as exc:
+                st.error(f"Training failed: {exc}")
+
+    # Render saved results on every rerun, including when the confusion-matrix selection changes.
+    saved_results = st.session_state.get("classification_results")
+    if saved_results:
+        res = saved_results["comparison"]
+        st.subheader("Model comparison")
+        st.dataframe(
+            res.style.format({c: "{:.3f}" for c in ["Accuracy", "Macro-F1", "Macro-Precision", "Macro-Recall"]}),
+            use_container_width=True,
+            hide_index=True
+        )
+        st.plotly_chart(
+            stylefig(px.bar(
+                res.melt(id_vars="Algorithm", value_vars=["Accuracy", "Macro-F1"],
+                         var_name="Metric", value_name="Score"),
+                x="Algorithm", y="Score", color="Metric", barmode="group",
+                title="Classifier comparison"
+            )),
+            use_container_width=True
+        )
+
+        models = saved_results["models"]
+        selected = st.selectbox(
+            "Confusion matrix model",
+            list(models.keys()),
+            key="classification_confusion_model"
+        )
+        pred = models[selected].predict(saved_results["X_test"])
+        labels = saved_results["labels"]
+        cm = confusion_matrix(saved_results["y_test"], pred, labels=labels)
+        st.plotly_chart(
+            stylefig(px.imshow(
+                cm, x=labels, y=labels, text_auto=True, color_continuous_scale="Teal",
+                title=selected + " · confusion matrix",
+                labels={"x": "Predicted", "y": "Actual", "color": "Count"}
+            )),
+            use_container_width=True
+        )
+        if hasattr(models[selected], "feature_importances_"):
+            imp = pd.DataFrame({
+                "Feature": saved_results["X_train_columns"],
+                "Importance": models[selected].feature_importances_
+            }).nlargest(15, "Importance")
+            st.plotly_chart(
+                stylefig(px.bar(
+                    imp.sort_values("Importance"), x="Importance", y="Feature",
+                    orientation="h", title="Feature importance"
+                )),
+                use_container_width=True
+            )
+        st.download_button(
+            "Download comparison", res.to_csv(index=False).encode(),
+            "classification_comparison.csv", "text/csv", key="download_classification_comparison"
+        )
+    else:
+        st.info("Choose algorithms and click **Train and compare classifiers** to generate comparison metrics and confusion matrices.")
 
     st.markdown("---")
     st.subheader("Predict a new student's final result")
