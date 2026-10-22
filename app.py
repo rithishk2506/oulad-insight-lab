@@ -376,14 +376,15 @@ def prediction(folder):
 def main():
     st.markdown("""
     <style>
-    .courseiq-brand{display:flex;align-items:center;gap:15px;margin:0 0 .5rem 0}
-    .courseiq-monogram{width:58px;height:58px;flex:0 0 58px;border-radius:15px;
+    .courseiq-brand{display:flex;align-items:center;gap:13px;margin:0 0 .5rem 0;max-width:100%;min-width:0}
+    .courseiq-cap{width:54px;height:54px;flex:0 0 54px;border-radius:14px;
       display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0d233a,#173b50);
-      border:1px solid #28536a;color:#38d7d0;font-size:25px;font-weight:850;letter-spacing:-3px}
-    .courseiq-monogram span{color:#38d7d0}
-    .courseiq-title{font-size:2.05rem;line-height:1.05;font-weight:800;letter-spacing:-.04em;color:#f4f8fc}
-    .courseiq-by{font-size:.83rem;color:#a9b9cb;margin-top:5px;letter-spacing:.04em}
-    .courseiq-subtitle{color:#a9b9cb;font-size:.93rem;margin:.25rem 0 1.15rem 0}
+      border:1px solid #28536a;color:#38d7d0;font-size:30px;line-height:1}
+    .courseiq-brand-copy{min-width:0}
+    .courseiq-title{font-size:clamp(1.65rem,4vw,2.05rem);line-height:1.08;font-weight:800;letter-spacing:-.035em;color:#f4f8fc;white-space:nowrap}
+    .courseiq-by{font-size:.8rem;color:#a9b9cb;margin-top:5px;letter-spacing:.035em}
+    .courseiq-subtitle{color:#a9b9cb;font-size:.9rem;margin:.35rem 0 1.15rem 0;line-height:1.45}
+    @media(max-width:480px){.courseiq-brand{gap:10px}.courseiq-cap{width:46px;height:46px;flex-basis:46px;font-size:26px}.courseiq-title{font-size:1.65rem}}
     .courseiq-nav-label{font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;color:#7f96ad;font-weight:700;margin:.5rem 0 .35rem 0}
     div[data-testid="stRadio"] > div[role="radiogroup"]{gap:.45rem;flex-wrap:wrap}
     div[data-testid="stRadio"] > div[role="radiogroup"] label{background:#111d2d;border:1px solid #263a52;border-radius:10px;padding:.48rem .85rem;margin:0}
@@ -393,8 +394,11 @@ def main():
     .team-footer .names{color:#edf3fc;font-weight:600;margin-top:.35rem;letter-spacing:.02em}
     </style>
     <div class="courseiq-brand">
-      <div class="courseiq-monogram"><span>R</span><span>H</span><span>S</span></div>
-      <div><div class="courseiq-title">CourseIQ</div><div class="courseiq-by">by Mining Minds</div></div>
+      <div class="courseiq-cap" aria-hidden="true">🎓</div>
+      <div class="courseiq-brand-copy">
+        <div class="courseiq-title">CourseIQ</div>
+        <div class="courseiq-by">by Mining Minds</div>
+      </div>
     </div>
     <div class="courseiq-subtitle">Data-Driven Course Recommendation System · OULAD Dataset</div>
     """, unsafe_allow_html=True)
@@ -545,7 +549,7 @@ def main():
     )
     st.markdown("---")
     if page=="Overview":
-        st.markdown("<div class='hero'><div class='eyebrow'>STUDENT LEARNING ANALYTICS · PROJECT WORKSPACE</div><div class='hero-title'>OULAD Insight Lab</div><p class='hero-copy'>Turn virtual learning activity into interpretable insights. Explore engagement segments, compare classification models, discover activity patterns, and estimate assessment performance.</p></div>",unsafe_allow_html=True)
+        st.markdown("<div class='hero'><div class='eyebrow'>STUDENT LEARNING ANALYTICS · PROJECT WORKSPACE</div><div class='hero-title'>CourseIQ</div><p class='hero-copy'>Turn virtual learning activity into interpretable insights. Explore engagement segments, compare classification models, discover activity patterns, and estimate assessment performance.</p></div>",unsafe_allow_html=True)
         required=["studentInfo.csv","studentVle.csv","vle.csv","assessments.csv","studentAssessment.csv"]
         p=Path(folder) if folder else None
         found=sum((p/f).exists() for f in required) if p else 0
