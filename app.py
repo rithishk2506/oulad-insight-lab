@@ -24,15 +24,36 @@ st.set_page_config(page_title="OULAD Insight Lab", page_icon="◈", layout="wide
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
-.stApp{background:#08111f;color:#e6edf7;font-family:'DM Sans',sans-serif}
-[data-testid="stSidebar"]{background:#0d192b;border-right:1px solid #20324a}
-h1,h2,h3{font-family:'Space Grotesk',sans-serif;color:#f4f8ff;letter-spacing:-.03em}
-p,label{color:#c7d2e2}
-div[data-testid="stMetric"]{background:#101e32;border:1px solid #233650;padding:16px;border-radius:13px}
-div[data-testid="stMetricLabel"]{color:#91a7c0} div[data-testid="stMetricValue"]{color:#f4f8ff}
-.stButton button,.stDownloadButton button{background:#142840;color:#f4f8ff;border:1px solid #2c4564;border-radius:9px}
-.stButton button:hover{border-color:#42d6c4;color:#42d6c4}
-hr{border-color:#20324a}
+:root{--bg:#0b1220;--panel:#111c2e;--panel2:#15243a;--line:#263750;--text:#edf3fc;--muted:#9aabc2;--accent:#4de0c1;--accent2:#7aa7ff}
+.stApp{background:radial-gradient(ellipse at 10% 0%,#14283d 0%,#0b1220 44%,#080e19 100%);color:var(--text);font-family:'DM Sans',sans-serif}
+[data-testid="stHeader"]{background:rgba(8,14,25,.72)}
+[data-testid="stSidebar"]{background:linear-gradient(180deg,#0f1b2d,#0b1423);border-right:1px solid var(--line)}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3{font-size:1.05rem;letter-spacing:.04em}
+h1,h2,h3{font-family:'Space Grotesk',sans-serif;color:#f5f8ff;letter-spacing:-.035em}
+h1{font-size:2.35rem!important;font-weight:700!important;margin-bottom:.2rem}
+h2{font-size:1.55rem!important}h3{font-size:1.12rem!important}
+p,label,.stCaption{color:#c5d1e2}
+[data-testid="stMetric"]{background:linear-gradient(145deg,rgba(23,39,61,.96),rgba(15,27,44,.96));border:1px solid #2a3d58;padding:17px 18px;border-radius:16px;box-shadow:0 8px 22px rgba(0,0,0,.12)}
+[data-testid="stMetricLabel"]{color:#a5b6cd!important;font-size:.82rem!important}
+[data-testid="stMetricValue"]{color:#f4f8ff!important;font-weight:700}
+[data-testid="stMetricDelta"]{font-size:.8rem}
+.stButton button,.stDownloadButton button{background:linear-gradient(135deg,#1b3650,#14263b);color:#f5f8ff;border:1px solid #35516e;border-radius:11px;min-height:2.6rem;font-weight:600;transition:all .15s ease}
+.stButton button:hover,.stDownloadButton button:hover{border-color:var(--accent);color:var(--accent);transform:translateY(-1px)}
+.stButton button[kind="primary"]{background:linear-gradient(135deg,#1b8b81,#176d79);border:1px solid #49d9c0;color:white}
+.stButton button[kind="primary"]:hover{background:linear-gradient(135deg,#24a99a,#1a8190);color:white}
+[data-testid="stTabs"] button{font-weight:600}
+[data-testid="stDataFrame"], [data-testid="stTable"]{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+[data-testid="stExpander"]{background:rgba(17,28,46,.72);border:1px solid var(--line);border-radius:12px}
+[data-baseweb="select"]>div,[data-baseweb="input"]>div,[data-baseweb="textarea"]>div{background:#111e31;border-color:#30445f;border-radius:10px}
+[data-testid="stFileUploader"]{background:rgba(17,28,46,.55);border:1px dashed #3a526f;border-radius:12px;padding:8px}
+hr{border-color:#263750;margin:1.3rem 0}
+.hero{padding:1.5rem 1.7rem;border:1px solid #2c4962;border-radius:20px;background:linear-gradient(115deg,rgba(23,56,74,.85),rgba(17,29,48,.9) 58%,rgba(28,43,70,.8));margin-bottom:1.25rem;box-shadow:0 16px 40px rgba(0,0,0,.15)}
+.eyebrow{color:var(--accent);letter-spacing:.16em;font-size:.72rem;font-weight:700;text-transform:uppercase;margin-bottom:.6rem}
+.hero-title{font-family:'Space Grotesk',sans-serif;font-size:2.3rem;line-height:1.1;font-weight:700;color:#f5f8ff;margin:0 0 .65rem 0}
+.hero-copy{color:#b9c9dd;font-size:1rem;max-width:800px;line-height:1.65;margin:0}
+.section-kicker{color:var(--accent);font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;font-weight:700;margin-bottom:.3rem}
+.small-muted{color:#9aabc2;font-size:.88rem}
+@media(max-width:700px){h1{font-size:1.8rem!important}.hero-title{font-size:1.8rem}.hero{padding:1.2rem}}
 </style>
 """, unsafe_allow_html=True)
 DEFAULT = r"D:/Documents/Datawarehouse Project/Dataset"
@@ -353,7 +374,8 @@ def prediction(folder):
 
 def main():
     st.sidebar.markdown("### ◈ OULAD INSIGHT LAB")
-    st.sidebar.caption("DATA MINING · DATA WAREHOUSING")
+    st.sidebar.caption("STUDENT LEARNING ANALYTICS")
+    st.sidebar.markdown("---")
 
     # Cloud-compatible dataset selection. Local folder mode is retained for desktop use.
     source = st.sidebar.radio("Dataset source", ["Local folder", "Upload CSV files"])
@@ -436,34 +458,37 @@ def main():
     if st.sidebar.button("Clear cache"):
         st.cache_data.clear()
         st.rerun()
-    page=st.sidebar.radio("NAVIGATION",["Overview","Clustering","Classification","Association Rules","Prediction"])
+    st.sidebar.markdown("#### WORKSPACE")
+    page=st.sidebar.radio("Navigate to",["Overview","Clustering","Classification","Association Rules","Prediction"],label_visibility="collapsed")
+    st.sidebar.markdown("---")
+    st.sidebar.caption("OULAD · INTERACTIVE MODEL LAB")
     if page=="Overview":
-        st.markdown("<span style='color:#42d6c4;letter-spacing:.15em;font-size:.8rem'>INTERACTIVE ANALYTICS WORKSPACE</span>",unsafe_allow_html=True)
-        st.title("OULAD Insight Lab")
-        st.write("Explore student outcomes, engagement segments, activity patterns and assessment score predictions.")
+        st.markdown("<div class='hero'><div class='eyebrow'>STUDENT LEARNING ANALYTICS · PROJECT WORKSPACE</div><div class='hero-title'>OULAD Insight Lab</div><p class='hero-copy'>Turn virtual learning activity into interpretable insights. Explore engagement segments, compare classification models, discover activity patterns, and estimate assessment performance.</p></div>",unsafe_allow_html=True)
         required=["studentInfo.csv","studentVle.csv","vle.csv","assessments.csv","studentAssessment.csv"]
         p=Path(folder) if folder else None
         found=sum((p/f).exists() for f in required) if p else 0
         c=st.columns(4)
-        c[0].metric("Required files",f"{found}/{len(required)}")
+        c[0].metric("Dataset readiness",f"{found}/{len(required)} files")
         c[1].metric("Analytics modules","4")
-        c[2].metric("Clustering methods","3")
-        c[3].metric("Local execution","Ready" if found==5 else "Check files")
+        c[2].metric("Clustering algorithms","3")
+        c[3].metric("Workspace status","Ready" if found==5 else "Setup needed")
         st.markdown("---")
         left,right=st.columns([1.3,1])
         with left:
-            st.subheader("Project workspace")
-            st.write("A local website for interactive parameter selection, model comparison, visual analysis and CSV export.")
-            st.write("**Clustering:** K-means, Hierarchical, DBSCAN")
-            st.write("**Classification:** Dummy, Decision Tree, Random Forest, Extra Trees, Logistic Regression")
-            st.write("**Association rules:** user-controlled support, confidence and lift")
-            st.write("**Prediction:** baseline, Linear/Ridge Regression, Decision Tree, Random Forest, Extra Trees")
+            st.markdown("<div class='section-kicker'>EXPLORE THE WORKSPACE</div>",unsafe_allow_html=True)
+            st.subheader("Analytics modules")
+            st.write("**01 · Clustering**  — K-means, Hierarchical and DBSCAN engagement segments")
+            st.write("**02 · Classification**  — Dummy baseline, KNN, Decision Tree, Random Forest, Extra Trees and Logistic Regression")
+            st.write("**03 · Association rules**  — Co-occurrence patterns using support, confidence and lift")
+            st.write("**04 · Score prediction**  — Baseline and regression models for assessment scores")
         with right:
+            st.markdown("<div class='section-kicker'>DATA STATUS</div>",unsafe_allow_html=True)
             st.subheader("Dataset readiness")
             for f in required:st.write(("🟢 " if p and (p/f).exists() else "🟠 ")+f)
             if found<5:
                 st.warning("Choose a valid local dataset folder or upload all five required CSV files in the sidebar.")
-        st.caption("Metrics are computed at runtime and can differ from previous experiments because preprocessing and splits may differ.")
+        st.info("Results are computed at runtime. Metrics can differ from earlier exports when preprocessing, model settings, or train/test splits change.")
+        st.caption("OULAD Insight Lab · Data warehousing and data mining project")
     elif not folder:
         st.title("Dataset required")
         st.info("Use the sidebar to select a dataset folder or upload all five required OULAD CSV files.")
