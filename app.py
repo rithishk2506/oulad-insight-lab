@@ -1,4 +1,7 @@
 import os
+import zipfile
+import tempfile
+import hashlib
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -269,7 +272,7 @@ def main():
         zip_uploads = [f for f in uploaded if f.name.lower().endswith(".zip")]
         student_vle_upload = upload_map.get("studentVle.csv")
         student_vle_zip = next(
-            (f for f in zip_uploads if "studentvle.csv" in zipfile.ZipFile(f).namelist()),
+            (f for f in zip_uploads if any(Path(n).name.lower() == "studentvle.csv" for n in zipfile.ZipFile(f).namelist())),
             None
         ) if zip_uploads else None
         missing_uploads = [
