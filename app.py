@@ -120,35 +120,72 @@ def classifier(folder):
     testpct=st.slider("Test split (%)",10,35,20,5)
     trees=st.select_slider("Ensemble trees",options=[100,200,300,500],value=300)
     depth=st.selectbox("Tree maximum depth",["Unlimited",5,10,15,20])
+
     if st.button("Train and compare classifiers",type="primary"):
-        df=load_engagement(folder)
-        cols=["gender","region","highest_education","imd_band","age_band","num_of_prev_attempts","studied_credits","disability","code_module","code_presentation","total_clicks","active_days","unique_resources"]
-        frame=df[cols+["final_result","id_student"]].copy().dropna(subset=["final_result"])
-        y=frame.pop("final_result").astype(str);groups=frame.pop("id_student")
-        for col in frame.select_dtypes(include="object").columns: frame[col]=frame[col].fillna("Unknown")
-        frame=pd.get_dummies(frame,dummy_na=True)
-        for col in frame.columns: frame[col]=pd.to_numeric(frame[col],errors="coerce").fillna(0)
-        train,test=next(GroupShuffleSplit(n_splits=1,test_size=testpct/100,random_state=42).split(frame,y,groups))
-        Xtr,Xte=frame.iloc[train],frame.iloc[test];ytr,yte=y.iloc[train],y.iloc[test]
-        d=None if depth=="Unlimited" else int(depth); models={}; preds=[]; rows=[]
-        for name in chosen:
-            if name=="Dummy baseline": model=DummyClassifier(strategy="most_frequent")
-            elif name=="Decision Tree": model=DecisionTreeClassifier(max_depth=d,min_samples_leaf=5,class_weight="balanced",random_state=42)
-            elif name=="Random Forest": model=RandomForestClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced_subsample",n_jobs=-1,random_state=42)
-            elif name=="Extra Trees": model=ExtraTreesClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced",n_jobs=-1,random_state=42)
-            else: model=LogisticRegression(max_iter=1000,class_weight="balanced")
-            model.fit(Xtr,ytr); pred=model.predict(Xte);models[name]=model
-            rows.append({"Algorithm":name,"Accuracy":accuracy_score(yte,pred),"Macro-F1":f1_score(yte,pred,average="macro",zero_division=0),"Macro-Precision":__import__("sklearn.metrics").metrics.precision_score(yte,pred,average="macro",zero_division=0),"Macro-Recall":__import__("sklearn.metrics").metrics.recall_score(yte,pred,average="macro",zero_division=0)})
-        res=pd.DataFrame(rows).sort_values("Macro-F1",ascending=False)
+        if not chosen:
+            st.warning("Select at least one algorithm.")
+            st.stop()
+        with st.spinner("Training classifiers..."):
+            df=load_engagement(folder)
+            cols=["gender","region","highest_education","imd_band","age_band","num_of_prev_attempts","studied_credits","disability","code_module","code_presentation","total_clicks","active_days","unique_resources"]
+            frame=df[cols+["final_result","id_student"]].copy().dropna(subset=["final_result"])
+            y=frame.pop("final_result").astype(str);groups=frame.pop("id_student")
+            for col in frame.select_dtypes(include="object").columns:
+                frame[col]=frame[col].fillna("Unknown")
+            frame=pd.get_dummies(frame,dummy_na=True)
+            for col in frame.columns:
+                frame[col]=pd.to_numeric(frame[col],errors="coerce").fillna(0)
+            train,test=next(GroupShuffleSplit(n_splits=1,test_size=testpct/100,random_state=42).split(frame,y,groups))
+            Xtr,Xte=frame.iloc[train],frame.iloc[test]
+            ytr,yte=y.iloc[train],y.iloc[test]
+            d=None if depth=="Unlimited" else int(depth)
+            models={}; predictions={}; rows=[]; importances={}
+            for name in chosen:
+                if name=="Dummy baseline":
+                    model=DummyClassifier(strategy="most_frequent")
+                elif name=="Decision Tree":
+                    model=DecisionTreeClassifier(max_depth=d,min_samples_leaf=5,class_weight="balanced",random_state=42)
+                elif name=="Random Forest":
+                    model=RandomForestClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced_subsample",n_jobs=-1,random_state=42)
+                elif name=="Extra Trees":
+                    model=ExtraTreesClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced",n_jobs=-1,random_state=42)
+                else:
+                    model=LogisticRegression(max_iter=1000,class_weight="balanced")
+                model.fit(Xtr,ytr)
+                pred=model.predict(Xte)
+                models[name]=model
+                predictions[name]=pred
+                rows.append({
+                    "Algorithm":name,
+                    "Accuracy":accuracy_score(yte,pred),
+                    "Macro-F1":f1_score(yte,pred,average="macro",zero_division=0),
+                    "Macro-Precision":__import__("sklearn.metrics").metrics.precision_score(yte,pred,average="macro",zero_division=0),
+                    "Macro-Recall":__import__("sklearn.metrics").metrics.recall_score(yte,pred,average="macro",zero_division=0)
+                })
+                if hasattr(model,"feature_importances_"):
+                    importances[name]=pd.DataFrame({"Feature":Xtr.columns,"Importance":model.feature_importances_}).nlargest(15,"Importance")
+            st.session_state["classification_results"] = {
+                "table": pd.DataFrame(rows).sort_values("Macro-F1",ascending=False),
+                "labels": ["Distinction","Fail","Pass","Withdrawn"],
+                "y_true": yte,
+                "predictions": predictions,
+                "importances": importances,
+                "chosen": list(models)
+            }
+
+    result = st.session_state.get("classification_results")
+    if result:
+        res=result["table"]
         st.dataframe(res.style.format({c:"{:.3f}" for c in ["Accuracy","Macro-F1","Macro-Precision","Macro-Recall"]}),use_container_width=True,hide_index=True)
         st.plotly_chart(stylefig(px.bar(res.melt(id_vars="Algorithm",value_vars=["Accuracy","Macro-F1"],var_name="Metric",value_name="Score"),x="Algorithm",y="Score",color="Metric",barmode="group",title="Classifier comparison")),use_container_width=True)
-        selected=st.selectbox("Confusion matrix model",list(models))
-        pred=models[selected].predict(Xte); labels=["Distinction","Fail","Pass","Withdrawn"]
-        cm=confusion_matrix(yte,pred,labels=labels)
+        selected=st.selectbox("Confusion matrix model",result["chosen"],key="classification_cm_model")
+        pred=result["predictions"][selected]
+        labels=result["labels"]
+        cm=confusion_matrix(result["y_true"],pred,labels=labels)
         st.plotly_chart(stylefig(px.imshow(cm,x=labels,y=labels,text_auto=True,color_continuous_scale="Teal",title=selected+" · confusion matrix",labels={"x":"Predicted","y":"Actual","color":"Count"})),use_container_width=True)
-        if hasattr(models[selected],"feature_importances_"):
-            imp=pd.DataFrame({"Feature":Xtr.columns,"Importance":models[selected].feature_importances_}).nlargest(15,"Importance")
-            st.plotly_chart(stylefig(px.bar(imp.sort_values("Importance"),x="Importance",y="Feature",orientation="h",title="Feature importance")),use_container_width=True)
+        if selected in result["importances"]:
+            imp=result["importances"][selected]
+            st.plotly_chart(stylefig(px.bar(imp.sort_values("Importance"),x="Importance",y="Feature",orientation="h",title=selected+" · feature importance")),use_container_width=True)
         st.download_button("Download comparison",res.to_csv(index=False).encode(),"classification_comparison.csv","text/csv")
 
 def rules(folder):
