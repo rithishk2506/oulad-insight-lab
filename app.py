@@ -373,6 +373,214 @@ def prediction(folder):
         st.plotly_chart(stylefig(fig),use_container_width=True)
         st.download_button("Download comparison",res.to_csv(index=False).encode(),"regression_comparison.csv","text/csv")
 
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def inspect_csv(path, mtime, size):
+    """Read a CSV in chunks for row counts, without loading the full file into RAM."""
+    rows = 0
+    columns = []
+    dtypes = {}
+    missing = {}
+    try:
+        sample = pd.read_csv(path, nrows=1000)
+        columns = list(sample.columns)
+        dtypes = {c: str(t) for c, t in sample.dtypes.items()}
+        # Chunk-based exact row and missing-value counts keep peak memory bounded.
+        for chunk in pd.read_csv(path, chunksize=250_000, low_memory=False):
+            rows += len(chunk)
+            if not missing:
+                missing = {c: 0 for c in chunk.columns}
+            counts = chunk.isna().sum()
+            for c, n in counts.items():
+                missing[c] = missing.get(c, 0) + int(n)
+        return {"rows": rows, "columns": columns, "dtypes": dtypes, "missing": missing, "error": ""}
+    except Exception as exc:
+        return {"rows": None, "columns": columns, "dtypes": dtypes, "missing": missing, "error": str(exc)}
+
+def dataset_overview(folder):
+    st.title("Dataset Explorer")
+    st.caption("File-level inventory and schema details for the OULAD source datasets.")
+    if not folder:
+        st.info("Select a dataset source in the sidebar first.")
+        return
+    p = Path(folder)
+    names = [
+        "assessments.csv", "courses.csv", "studentAssessment.csv", "studentInfo.csv",
+        "studentRegistration.csv", "studentVle.csv", "vle.csv"
+    ]
+    available = [n for n in names if (p / n).is_file()]
+    if not available:
+        st.warning("No recognized OULAD CSV files were found in the selected folder.")
+        return
+    st.markdown("### Dataset description")
+    st.write("The Open University Learning Analytics Dataset (OULAD) combines student demographics, course presentations, registrations, assessments, virtual learning environment (VLE) resources, and student interactions. The tables connect through identifiers such as `id_student`, `code_module`, `code_presentation`, and `id_assessment`/`id_site`.")
+    summary_rows = []
+    for name in available:
+        path = p / name
+        meta = inspect_csv(str(path), path.stat().st_mtime, path.stat().st_size)
+        summary_rows.append({
+            "CSV file": name,
+            "Records": f'{meta["rows"]:,}' if meta["rows"] is not None else "Unavailable",
+            "Attributes": len(meta["columns"]),
+            "File size (MB)": round(path.stat().st_size / (1024 * 1024), 2),
+            "Missing cells": f'{sum(meta["missing"].values()):,}' if meta["missing"] else "—",
+            "Status": "OK" if not meta["error"] else "Read error"
+        })
+    st.markdown("### Record and attribute summary")
+    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+    st.caption("Row counts are scanned in chunks to avoid loading the entire large studentVle.csv file into memory. First scan may take time.")
+    choice = st.selectbox("Inspect a CSV's attributes", available, key="dataset_schema_choice")
+    path = p / choice
+    meta = inspect_csv(str(path), path.stat().st_mtime, path.stat().st_size)
+    if meta["error"]:
+        st.error(f"Could not inspect {choice}: {meta['error']}")
+        return
+    st.subheader(choice)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Records", f'{meta["rows"]:,}')
+    m2.metric("Attributes", len(meta["columns"]))
+    m3.metric("File size", f'{path.stat().st_size / (1024*1024):,.2f} MB')
+    schema = pd.DataFrame({
+        "Attribute": meta["columns"],
+        "Inferred data type": [meta["dtypes"].get(c, "unknown") for c in meta["columns"]],
+        "Missing values": [meta["missing"].get(c, 0) for c in meta["columns"]]
+    })
+    st.dataframe(schema, use_container_width=True, hide_index=True)
+    with st.expander("Preview first 10 rows"):
+        st.dataframe(pd.read_csv(path, nrows=10), use_container_width=True, hide_index=True)
+
+def olap_workspace(folder):
+    st.title("OLAP Operations")
+    st.caption("Perform Roll-up, Drill-down, Slice, Dice, and Pivot interactively on a selected dataset.")
+    st.write("OLAP (Online Analytical Processing) summarizes and reshapes data to support multidimensional analysis. Choose a table, dimensions, and measure; the result is computed from the selected CSV.")
+    if not folder:
+        st.info("Select a dataset source in the sidebar first.")
+        return
+    p = Path(folder)
+    options = [n for n in ["studentInfo.csv", "studentAssessment.csv", "assessments.csv", "vle.csv", "courses.csv", "studentRegistration.csv"] if (p/n).exists()]
+    if not options:
+        st.warning("No supported CSV tables are available.")
+        return
+    table = st.selectbox("1. Select source table", options, key="olap_table")
+    # Read a manageable source table. The very large interaction file is excluded from this
+    # generic interactive workspace to prevent another CPU/RAM spike on Community Cloud.
+    if table == "studentVle.csv":
+        st.warning("The raw studentVle.csv table is intentionally excluded from interactive full-table OLAP here because it can be several GB. Use the ETL aggregated warehouse output for large-scale interaction OLAP.")
+        return
+    try:
+        df = pd.read_csv(p/table, low_memory=False)
+    except Exception as exc:
+        st.error(f"Unable to load table: {exc}")
+        return
+    if df.empty:
+        st.warning("The selected table is empty.")
+        return
+    numeric_cols = list(df.select_dtypes(include=np.number).columns)
+    all_cols = list(df.columns)
+    c1, c2 = st.columns(2)
+    with c1:
+        dims = st.multiselect("2. Dimension(s) — group/filter by these attributes", all_cols, default=all_cols[:1], key="olap_dims")
+    with c2:
+        measure = st.selectbox("3. Measure — numeric attribute to aggregate", ["Record count"] + numeric_cols, key="olap_measure")
+    agg = st.selectbox("Aggregation function", ["Sum", "Mean", "Count", "Minimum", "Maximum"], key="olap_agg")
+    op = st.selectbox("4. OLAP operation", ["Roll-up", "Drill-down", "Slice", "Dice", "Pivot"], key="olap_operation")
+    st.markdown("#### What this operation means")
+    explanations = {
+        "Roll-up": "Aggregate detailed records into groups at a higher level. Select one or more dimensions; the selected measure is summarized for each group.",
+        "Drill-down": "Inspect a more detailed breakdown. Add additional dimensions (for example, group by both course and presentation instead of course alone).",
+        "Slice": "Filter the table to one value of a single dimension, then summarize the remaining records.",
+        "Dice": "Apply value filters to multiple dimensions to create a smaller multidimensional subset.",
+        "Pivot": "Rearrange row and column dimensions to compare the measure across two dimensions."
+    }
+    st.info(explanations[op])
+    filters = {}
+    if op in ("Slice", "Dice"):
+        filter_dims = dims if op == "Dice" else dims[:1]
+        if not filter_dims:
+            st.warning("Choose at least one dimension to filter.")
+        for d in filter_dims:
+            vals = df[d].dropna().astype(str).unique().tolist()
+            vals = sorted(vals)[:500]
+            selected = st.multiselect(f"Filter {d}", vals, default=[], key=f"olap_filter_{d}")
+            if selected:
+                filters[d] = selected
+    row_dim = st.selectbox("Pivot row dimension", dims or all_cols, key="olap_row_dim") if op == "Pivot" else None
+    col_choices = [c for c in (dims or all_cols) if c != row_dim]
+    col_dim = st.selectbox("Pivot column dimension", col_choices or all_cols, key="olap_col_dim") if op == "Pivot" else None
+    if st.button("Run OLAP operation", type="primary", key="run_olap"):
+        result = df.copy()
+        for d, vals in filters.items():
+            result = result[result[d].astype(str).isin(vals)]
+        st.metric("Records after filters", f"{len(result):,}")
+        if op == "Pivot":
+            if not numeric_cols:
+                st.warning("Pivot requires a numeric measure.")
+                return
+            actual_measure = measure if measure != "Record count" else numeric_cols[0]
+            aggfunc = {"Sum":"sum","Mean":"mean","Count":"count","Minimum":"min","Maximum":"max"}[agg]
+            pivot = pd.pivot_table(result, index=row_dim, columns=col_dim, values=actual_measure, aggfunc=aggfunc, fill_value=0)
+            st.subheader("Pivot result")
+            st.dataframe(pivot, use_container_width=True)
+            st.download_button("Download OLAP result", pivot.to_csv().encode(), "olap_pivot.csv", "text/csv")
+        elif not dims:
+            st.warning("Select at least one dimension.")
+        else:
+            if measure == "Record count":
+                result = result.groupby(dims, dropna=False).size().reset_index(name="Record count")
+            else:
+                aggfunc = {"Sum":"sum","Mean":"mean","Count":"count","Minimum":"min","Maximum":"max"}[agg]
+                result = result.groupby(dims, dropna=False)[measure].agg(aggfunc).reset_index(name=f"{agg} of {measure}")
+            st.subheader(f"{op} result")
+            st.dataframe(result, use_container_width=True, hide_index=True)
+            st.download_button("Download OLAP result", result.to_csv(index=False).encode(), "olap_result.csv", "text/csv")
+
+def warehouse_explorer():
+    st.title("Data Warehouse")
+    st.caption("Warehouse model produced by the project's ETL pipeline.")
+    st.write("The ETL workflow extracts OULAD source CSVs, validates records and missing values, builds dimensions and fact tables, and writes warehouse outputs to `ETL/output/`.")
+    st.markdown("### Warehouse architecture")
+    st.code("""Source OULAD CSVs
+   ├── studentInfo.csv ───────────────┐
+   ├── studentRegistration.csv ───────┤
+   ├── vle.csv ──> dim_vle_resource ──┤
+   ├── assessments.csv -> dim_assessment
+   ├── courses.csv ──> dim_course_presentation
+   ├── studentVle.csv -> fact_vle_interaction
+   └── studentAssessment.csv -> fact_assessment
+
+Dimensions:
+  dim_student
+  dim_course_presentation
+  dim_time
+  dim_vle_resource
+  dim_assessment
+
+Facts:
+  fact_vle_interaction
+  fact_assessment""", language="text")
+    st.markdown("### Fact and dimension tables")
+    tables = [
+        ("dim_student", "Dimension", "Student attributes and student surrogate key", "student_key"),
+        ("dim_course_presentation", "Dimension", "Course module and presentation attributes", "presentation_key"),
+        ("dim_time", "Dimension", "Relative-day/time lookup", "time_key"),
+        ("dim_vle_resource", "Dimension", "VLE resource/site attributes", "vle_key"),
+        ("dim_assessment", "Dimension", "Assessment metadata", "assessment_key"),
+        ("fact_vle_interaction", "Fact", "Student VLE interactions and click measures", "student_key, vle_key, time_key, presentation_key"),
+        ("fact_assessment", "Fact", "Student assessment results and score measures", "student_key, assessment_key, time_key, presentation_key"),
+    ]
+    st.dataframe(pd.DataFrame(tables, columns=["Table", "Type", "Purpose", "Key(s)"]), use_container_width=True, hide_index=True)
+    st.markdown("### Star-schema relationships")
+    st.write("- `fact_vle_interaction.student_key` → `dim_student.student_key`")
+    st.write("- `fact_vle_interaction.vle_key` → `dim_vle_resource.vle_key`")
+    st.write("- `fact_vle_interaction.time_key` → `dim_time.time_key`")
+    st.write("- `fact_vle_interaction.presentation_key` → `dim_course_presentation.presentation_key`")
+    st.write("- `fact_assessment.student_key` → `dim_student.student_key`")
+    st.write("- `fact_assessment.assessment_key` → `dim_assessment.assessment_key`")
+    st.write("- `fact_assessment.time_key` → `dim_time.time_key`")
+    st.write("- `fact_assessment.presentation_key` → `dim_course_presentation.presentation_key`")
+    st.info("Warehouse outputs are generated by `ETL/oulad_etl.py`. If you add the ETL/output CSVs to the app repository, this page can also show their actual row counts and preview their records.")
+
+
 def main():
     st.markdown("""
     <style>
@@ -542,39 +750,34 @@ def main():
     st.markdown('<div class="courseiq-nav-label">Explore CourseIQ</div>', unsafe_allow_html=True)
     page = st.radio(
         "Navigate to",
-        ["Overview", "Clustering", "Classification", "Association Rules", "Prediction"],
+        ["Overview", "OLAP Operations", "Data Warehouse", "Clustering", "Classification", "Association Rules", "Prediction"],
         horizontal=True,
         label_visibility="collapsed",
         key="courseiq_top_navigation",
     )
     st.markdown("---")
     if page=="Overview":
-        st.markdown("<div class='hero'><div class='eyebrow'>STUDENT LEARNING ANALYTICS · PROJECT WORKSPACE</div><div class='hero-title'>CourseIQ</div><p class='hero-copy'>Turn virtual learning activity into interpretable insights. Explore engagement segments, compare classification models, discover activity patterns, and estimate assessment performance.</p></div>",unsafe_allow_html=True)
+        st.markdown("<div class='hero'><div class='eyebrow'>STUDENT LEARNING ANALYTICS · PROJECT WORKSPACE</div><div class='hero-title'>CourseIQ</div><p class='hero-copy'>Explore the OULAD dataset, inspect each CSV's record and attribute counts, perform OLAP operations, examine the warehouse schema, and run learning analytics.</p></div>",unsafe_allow_html=True)
         required=["studentInfo.csv","studentVle.csv","vle.csv","assessments.csv","studentAssessment.csv"]
         p=Path(folder) if folder else None
         found=sum((p/f).exists() for f in required) if p else 0
         c=st.columns(4)
-        c[0].metric("Dataset readiness",f"{found}/{len(required)} files")
+        c[0].metric("Core CSV files",f"{found}/{len(required)}")
         c[1].metric("Analytics modules","4")
         c[2].metric("Clustering algorithms","3")
         c[3].metric("Workspace status","Ready" if found==5 else "Setup needed")
         st.markdown("---")
-        left,right=st.columns([1.3,1])
-        with left:
-            st.markdown("<div class='section-kicker'>EXPLORE THE WORKSPACE</div>",unsafe_allow_html=True)
-            st.subheader("Analytics modules")
-            st.write("**01 · Clustering**  — K-means, Hierarchical and DBSCAN engagement segments")
-            st.write("**02 · Classification**  — Dummy baseline, KNN, Decision Tree, Random Forest, Extra Trees and Logistic Regression")
-            st.write("**03 · Association rules**  — Co-occurrence patterns using support, confidence and lift")
-            st.write("**04 · Score prediction**  — Baseline and regression models for assessment scores")
-        with right:
-            st.markdown("<div class='section-kicker'>DATA STATUS</div>",unsafe_allow_html=True)
-            st.subheader("Dataset readiness")
-            for f in required:st.write(("🟢 " if p and (p/f).exists() else "🟠 ")+f)
-            if found<5:
-                st.warning("Choose a valid local dataset folder or upload all five required CSV files in the sidebar.")
-        st.info("Results are computed at runtime. Metrics can differ from earlier exports when preprocessing, model settings, or train/test splits change.")
-        st.caption("OULAD Insight Lab · Data warehousing and data mining project")
+        dataset_overview(folder)
+        st.markdown("---")
+        st.subheader("Analytics modules")
+        st.write("**Clustering** — K-means, Hierarchical and DBSCAN engagement segments")
+        st.write("**Classification** — Dummy baseline, KNN, Decision Tree, Random Forest, Extra Trees and Logistic Regression")
+        st.write("**Association Rules** — co-occurrence patterns using support, confidence and lift")
+        st.write("**Prediction** — baseline and regression models for assessment scores")
+    elif page=="OLAP Operations":
+        olap_workspace(folder)
+    elif page=="Data Warehouse":
+        warehouse_explorer()
     elif not folder:
         st.title("Dataset required")
         st.info("Use the sidebar to select a dataset folder or upload all five required OULAD CSV files.")
