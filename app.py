@@ -123,6 +123,8 @@ def classifier(folder):
     trees=st.select_slider("Ensemble trees",options=[100,200,300,500],value=300)
     depth=st.selectbox("Tree maximum depth",["Unlimited",5,10,15,20])
     if st.button("Train and compare classifiers",type="primary"):
+        # A newly trained model set invalidates any prediction made with the previous set.
+        st.session_state.pop("new_student_prediction", None)
         df=load_engagement(folder)
         cols=["gender","region","highest_education","imd_band","age_band","num_of_prev_attempts","studied_credits","disability","code_module","code_presentation","total_clicks","active_days","unique_resources"]
         frame=df[cols+["final_result","id_student"]].copy().dropna(subset=["final_result"])
@@ -222,17 +224,28 @@ def classifier(folder):
         new_df = new_df.reindex(columns=saved["columns"], fill_value=0)
         model = saved["models"][model_name]
         result = str(model.predict(new_df)[0])
-        st.session_state["new_student_prediction"] = {"result": result, "model": model_name}
+        st.session_state["new_student_prediction"] = {
+            "result": result, "model": model_name, "input": new_df.to_dict(orient="records")[0]
+        }
     outcome = st.session_state.get("new_student_prediction")
     if outcome:
         st.success(f"Predicted final result: **{outcome['result']}**")
         st.caption(f"Model used: {outcome['model']}. This is a model estimate, not a guarantee.")
-        model = saved["models"][outcome["model"]]
-        if hasattr(model, "predict_proba"):
-            probs = model.predict_proba(new_df) if "new_df" in locals() else None
-            if probs is not None:
-                prob_df = pd.DataFrame({"Class": model.classes_, "Estimated probability": probs[0]}).sort_values("Estimated probability", ascending=False)
-                st.dataframe(prob_df.style.format({"Estimated probability": "{:.1%}"}), hide_index=True, use_container_width=True)
+        # Only render a stored result if its model still exists in the current trained set.
+        if outcome["model"] in saved["models"]:
+            model = saved["models"][outcome["model"]]
+            if hasattr(model, "predict_proba"):
+                saved_input = pd.DataFrame([outcome["input"]]).reindex(columns=saved["columns"], fill_value=0)
+                probs = model.predict_proba(saved_input)
+                prob_df = pd.DataFrame({
+                    "Class": model.classes_, "Estimated probability": probs[0]
+                }).sort_values("Estimated probability", ascending=False)
+                st.dataframe(
+                    prob_df.style.format({"Estimated probability": "{:.1%}"}),
+                    hide_index=True, use_container_width=True
+                )
+        else:
+            st.info("The classifier set has changed. Please predict again using the newly trained models.")
 
 def rules(folder):
     st.title("Association rule mining")
