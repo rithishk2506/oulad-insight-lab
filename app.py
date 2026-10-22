@@ -17,6 +17,8 @@ from sklearn.dummy import DummyClassifier
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, RandomForestRegressor, ExtraTreesRegressor
 from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import make_pipeline
 
 st.set_page_config(page_title="OULAD Insight Lab", page_icon="◈", layout="wide")
 st.markdown("""
@@ -116,7 +118,7 @@ def clustering(folder):
 def classifier(folder):
     st.title("Classification workbench")
     st.caption("Train selected algorithms on the same student-grouped holdout split.")
-    chosen=st.multiselect("Algorithms",["Dummy baseline","Decision Tree","Random Forest","Extra Trees","Logistic Regression"],["Dummy baseline","Decision Tree","Random Forest"])
+    chosen=st.multiselect("Algorithms",["Dummy baseline","Decision Tree","Random Forest","Extra Trees","Logistic Regression","KNN"],["Dummy baseline","Decision Tree","Random Forest"])
     testpct=st.slider("Test split (%)",10,35,20,5)
     trees=st.select_slider("Ensemble trees",options=[100,200,300,500],value=300)
     depth=st.selectbox("Tree maximum depth",["Unlimited",5,10,15,20])
@@ -136,12 +138,17 @@ def classifier(folder):
             elif name=="Decision Tree": model=DecisionTreeClassifier(max_depth=d,min_samples_leaf=5,class_weight="balanced",random_state=42)
             elif name=="Random Forest": model=RandomForestClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced_subsample",n_jobs=-1,random_state=42)
             elif name=="Extra Trees": model=ExtraTreesClassifier(n_estimators=trees,max_depth=d,min_samples_leaf=5,class_weight="balanced",n_jobs=-1,random_state=42)
-            else: model=LogisticRegression(max_iter=1000,class_weight="balanced")
+            elif name=="Logistic Regression": model=LogisticRegression(max_iter=1000,class_weight="balanced")
+            else: model=make_pipeline(StandardScaler(with_mean=False),KNeighborsClassifier(n_neighbors=5,weights="distance"))
             model.fit(Xtr,ytr); pred=model.predict(Xte);models[name]=model
             rows.append({"Algorithm":name,"Accuracy":accuracy_score(yte,pred),"Macro-F1":f1_score(yte,pred,average="macro",zero_division=0),"Macro-Precision":__import__("sklearn.metrics").metrics.precision_score(yte,pred,average="macro",zero_division=0),"Macro-Recall":__import__("sklearn.metrics").metrics.recall_score(yte,pred,average="macro",zero_division=0)})
         res=pd.DataFrame(rows).sort_values("Macro-F1",ascending=False)
         st.dataframe(res.style.format({c:"{:.3f}" for c in ["Accuracy","Macro-F1","Macro-Precision","Macro-Recall"]}),use_container_width=True,hide_index=True)
         st.plotly_chart(stylefig(px.bar(res.melt(id_vars="Algorithm",value_vars=["Accuracy","Macro-F1"],var_name="Metric",value_name="Score"),x="Algorithm",y="Score",color="Metric",barmode="group",title="Classifier comparison")),use_container_width=True)
+        st.session_state["classification_models"] = {
+            "models": models, "columns": list(Xtr.columns), "features": cols,
+            "classes": sorted(y.unique().tolist())
+        }
         selected=st.selectbox("Confusion matrix model",list(models))
         pred=models[selected].predict(Xte); labels=["Distinction","Fail","Pass","Withdrawn"]
         cm=confusion_matrix(yte,pred,labels=labels)
@@ -150,6 +157,82 @@ def classifier(folder):
             imp=pd.DataFrame({"Feature":Xtr.columns,"Importance":models[selected].feature_importances_}).nlargest(15,"Importance")
             st.plotly_chart(stylefig(px.bar(imp.sort_values("Importance"),x="Importance",y="Feature",orientation="h",title="Feature importance")),use_container_width=True)
         st.download_button("Download comparison",res.to_csv(index=False).encode(),"classification_comparison.csv","text/csv")
+
+    st.markdown("---")
+    st.subheader("Predict a new student's final result")
+    st.caption("Train the classifiers above first. You can enter values manually or generate a sample student profile.")
+    saved = st.session_state.get("classification_models")
+    if not saved:
+        st.info("Choose algorithms and click **Train and compare classifiers** to enable new-student prediction.")
+        return
+
+    # The random profile button populates the same fields users can edit manually.
+    categorical_options = {
+        "gender": ["M", "F"],
+        "region": ["East Anglian Region", "East Midlands Region", "Ireland", "London Region", "North Region", "North Western Region", "Scotland", "South East Region", "South Region", "South West Region", "West Midlands Region", "Wales", "Yorkshire Region"],
+        "highest_education": ["No Formal quals", "Lower Than A Level", "A Level or Equivalent", "HE Qualification", "Post Graduate Qualification"],
+        "imd_band": ["0-10%", "10-20", "20-30%", "30-40%", "40-50%", "50-60%", "60-70%", "70-80%", "80-90%", "90-100%", "Unknown"],
+        "age_band": ["0-35", "35-55", "55<="],
+        "disability": ["N", "Y"],
+        "code_module": ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"],
+        "code_presentation": ["2013J", "2014J", "2013B", "2014B"],
+    }
+    numeric_options = {
+        "num_of_prev_attempts": (0, 3), "studied_credits": (30, 120),
+        "total_clicks": (0, 8000), "active_days": (0, 240), "unique_resources": (0, 300),
+    }
+    if st.button("🎲 Fill random student values", key="random_student_values"):
+        rng = np.random.default_rng()
+        for col, options in categorical_options.items():
+            st.session_state["newstudent_" + col] = str(rng.choice(options[:-1] if col == "imd_band" else options))
+        for col, (lo, hi) in numeric_options.items():
+            st.session_state["newstudent_" + col] = int(rng.integers(lo, hi + 1))
+        st.session_state.pop("new_student_prediction", None)
+
+    with st.form("new_student_prediction_form"):
+        st.markdown("**Student background**")
+        c1, c2, c3 = st.columns(3)
+        inputs = {}
+        for i, col in enumerate(["gender", "region", "highest_education", "imd_band", "age_band", "disability"]):
+            with [c1, c2, c3][i % 3]:
+                opts = categorical_options[col]
+                default = st.session_state.get("newstudent_" + col, "Unknown" if col == "imd_band" else opts[0])
+                if default not in opts: default = opts[0]
+                inputs[col] = st.selectbox(col.replace("_", " ").title(), opts, index=opts.index(default), key="newstudent_" + col)
+        st.markdown("**Course and engagement**")
+        c1, c2, c3 = st.columns(3)
+        for i, col in enumerate(["code_module", "code_presentation"]):
+            with [c1, c2][i]:
+                opts = categorical_options[col]
+                default = st.session_state.get("newstudent_" + col, opts[0])
+                if default not in opts: default = opts[0]
+                inputs[col] = st.selectbox(col.replace("_", " ").title(), opts, index=opts.index(default), key="newstudent_" + col)
+        for i, col in enumerate(numeric_options):
+            with [c1, c2, c3][i % 3]:
+                lo, hi = numeric_options[col]
+                default = int(st.session_state.get("newstudent_" + col, lo))
+                inputs[col] = st.number_input(col.replace("_", " ").title(), min_value=lo, max_value=hi, value=default, step=1, key="newstudent_" + col)
+        model_name = st.selectbox("Prediction model", list(saved["models"]), index=(list(saved["models"]).index("Random Forest") if "Random Forest" in saved["models"] else 0), key="newstudent_model")
+        submitted = st.form_submit_button("Predict final result", type="primary")
+    if submitted:
+        new_df = pd.DataFrame([inputs])
+        for col in new_df.select_dtypes(include="object").columns:
+            new_df[col] = new_df[col].fillna("Unknown")
+        new_df = pd.get_dummies(new_df, dummy_na=True)
+        new_df = new_df.reindex(columns=saved["columns"], fill_value=0)
+        model = saved["models"][model_name]
+        result = str(model.predict(new_df)[0])
+        st.session_state["new_student_prediction"] = {"result": result, "model": model_name}
+    outcome = st.session_state.get("new_student_prediction")
+    if outcome:
+        st.success(f"Predicted final result: **{outcome['result']}**")
+        st.caption(f"Model used: {outcome['model']}. This is a model estimate, not a guarantee.")
+        model = saved["models"][outcome["model"]]
+        if hasattr(model, "predict_proba"):
+            probs = model.predict_proba(new_df) if "new_df" in locals() else None
+            if probs is not None:
+                prob_df = pd.DataFrame({"Class": model.classes_, "Estimated probability": probs[0]}).sort_values("Estimated probability", ascending=False)
+                st.dataframe(prob_df.style.format({"Estimated probability": "{:.1%}"}), hide_index=True, use_container_width=True)
 
 def rules(folder):
     st.title("Association rule mining")
