@@ -2,6 +2,7 @@ import os
 import zipfile
 import tempfile
 import hashlib
+import requests
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -377,14 +378,80 @@ def main():
     st.sidebar.caption("STUDENT LEARNING ANALYTICS")
     st.sidebar.markdown("---")
 
-    # Cloud-compatible dataset selection. Local folder mode is retained for desktop use.
-    source = st.sidebar.radio("Dataset source", ["Local folder", "Upload CSV files"])
-    if source == "Local folder":
+    # Automatically load repository data in Streamlit Cloud; local/upload modes remain available.
+    @st.cache_data(show_spinner=False, max_entries=2)
+    def download_github_file(filename, token):
+        url = f"https://raw.githubusercontent.com/rithishk2506/oulad-insight-lab/main/{filename}"
+        response = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.raw+json"},
+            timeout=(20, 300),
+        )
+        response.raise_for_status()
+        return response.content
+
+    def prepare_github_dataset():
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        if not token:
+            st.sidebar.error("GITHUB_TOKEN is missing. Add it in Streamlit app Settings → Secrets.")
+            return ""
+        # Keep the extracted dataset in the app's temporary directory for this running instance.
+        data_dir = Path(tempfile.gettempdir()) / "oulad_insight_lab_data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        required_files = [
+            "studentInfo.csv", "vle.csv", "assessments.csv", "studentAssessment.csv"
+        ]
+        # Download smaller files only when not already present.
+        for filename in required_files:
+            target = data_dir / filename
+            if not target.exists() or target.stat().st_size == 0:
+                try:
+                    target.write_bytes(download_github_file(filename, token))
+                except Exception as exc:
+                    st.sidebar.error(f"Could not download {filename} from the private GitHub repository: {exc}")
+                    return ""
+        student_vle = data_dir / "studentVle.csv"
+        if not student_vle.exists() or student_vle.stat().st_size == 0:
+            try:
+                zip_path = data_dir / "studentVle.zip"
+                if not zip_path.exists() or zip_path.stat().st_size == 0:
+                    with st.sidebar.status("Downloading studentVle.zip from private GitHub repository…", expanded=True):
+                        zip_path.write_bytes(download_github_file("studentVle.zip", token))
+                with st.sidebar.status("Extracting studentVle.csv…", expanded=True):
+                    with zipfile.ZipFile(zip_path) as archive:
+                        member = next(
+                            (n for n in archive.namelist() if Path(n).name.lower() == "studentvle.csv"),
+                            None,
+                        )
+                        if not member:
+                            raise FileNotFoundError("studentVle.csv was not found inside studentVle.zip.")
+                        with archive.open(member) as source, student_vle.open("wb") as dest:
+                            while True:
+                                chunk = source.read(8 * 1024 * 1024)
+                                if not chunk:
+                                    break
+                                dest.write(chunk)
+            except Exception as exc:
+                st.sidebar.error(f"Could not download/extract studentVle.zip: {exc}")
+                return ""
+        return str(data_dir)
+
+    source = st.sidebar.radio(
+        "Dataset source",
+        ["Automatic (private GitHub)", "Local folder", "Upload CSV files"],
+        index=0,
+    )
+    if source == "Automatic (private GitHub)":
+        folder = prepare_github_dataset()
+        if folder:
+            st.sidebar.success("Dataset loaded from your private GitHub repository.")
+            st.sidebar.caption("The extracted studentVle.csv is large; first load may take several minutes and needs sufficient disk space.")
+    elif source == "Local folder":
         folder = st.sidebar.text_input("Dataset folder", find_dir())
     else:
         st.sidebar.caption(
-            "Upload the four smaller CSV files plus studentVle.zip. "
-            "The ZIP must contain studentVle.csv. Each upload must be below 200 MB."
+            "Upload the smaller CSV files plus studentVle.zip. "
+            "The ZIP must contain studentVle.csv."
         )
         uploaded = st.sidebar.file_uploader(
             "Choose OULAD CSV files and studentVle.zip",
@@ -397,42 +464,36 @@ def main():
         upload_map = {f.name: f for f in uploaded}
         zip_uploads = [f for f in uploaded if f.name.lower().endswith(".zip")]
         student_vle_upload = upload_map.get("studentVle.csv")
-        student_vle_zip = next(
-            (f for f in zip_uploads if any(Path(n).name.lower() == "studentvle.csv" for n in zipfile.ZipFile(f).namelist())),
-            None
-        ) if zip_uploads else None
-        missing_uploads = [
-            name for name in required_names
-            if name != "studentVle.csv" and name not in upload_map
-        ]
+        student_vle_zip = None
+        for zf in zip_uploads:
+            try:
+                with zipfile.ZipFile(zf) as archive:
+                    if any(Path(n).name.lower() == "studentvle.csv" for n in archive.namelist()):
+                        student_vle_zip = zf
+                        break
+            except zipfile.BadZipFile:
+                continue
+        missing_uploads = [name for name in required_names if name != "studentVle.csv" and name not in upload_map]
         if student_vle_upload is None and student_vle_zip is None:
             missing_uploads.insert(1, "studentVle.zip (containing studentVle.csv)")
         if missing_uploads:
             st.sidebar.warning("Still needed: " + ", ".join(missing_uploads))
             folder = ""
         else:
-            upload_sizes = [
-                f"{name}:{upload_map[name].size}"
-                for name in required_names if name in upload_map
-            ]
+            upload_sizes = [f"{name}:{upload_map[name].size}" for name in required_names if name in upload_map]
             if student_vle_zip is not None:
                 upload_sizes.append(f"studentVle.zip:{student_vle_zip.size}")
             upload_signature = hashlib.md5("|".join(upload_sizes).encode()).hexdigest()
             folder = str(Path(tempfile.gettempdir()) / ("oulad_upload_" + upload_signature))
             data_dir = Path(folder)
             data_dir.mkdir(parents=True, exist_ok=True)
-
             for name in required_names:
                 target = data_dir / name
                 if name == "studentVle.csv" and student_vle_upload is None:
                     if not target.exists():
                         try:
                             with zipfile.ZipFile(student_vle_zip) as archive:
-                                member = next(
-                                    n for n in archive.namelist()
-                                    if Path(n).name.lower() == "studentvle.csv"
-                                )
-                                # Stream extraction to avoid holding the 4+ GB CSV in RAM.
+                                member = next(n for n in archive.namelist() if Path(n).name.lower() == "studentvle.csv")
                                 with archive.open(member) as source, target.open("wb") as dest:
                                     while True:
                                         chunk = source.read(8 * 1024 * 1024)
@@ -444,17 +505,11 @@ def main():
                             folder = ""
                             break
                 elif name in upload_map:
-                    target = data_dir / name
                     if not target.exists() or target.stat().st_size != upload_map[name].size:
                         target.write_bytes(upload_map[name].getvalue())
-
             if folder:
                 st.sidebar.success("All five required files are available for this session.")
-                st.sidebar.warning(
-                    "Resource note: studentVle.csv expands to several GB. Streamlit Cloud may run out "
-                    "of disk space or memory when clustering or mining association rules."
-                )
-
+                st.sidebar.warning("studentVle.csv expands to several GB; Streamlit Cloud may run out of disk space or memory.")
     if st.sidebar.button("Clear cache"):
         st.cache_data.clear()
         st.rerun()
@@ -496,5 +551,17 @@ def main():
     elif page=="Classification":classifier(folder)
     elif page=="Association Rules":rules(folder)
     else:prediction(folder)
+
+
+    st.markdown("""
+    <style>
+    .team-footer{margin-top:3rem;padding:1.2rem 1rem;border-top:1px solid #263750;text-align:center;color:#9aabc2;font-size:.88rem}
+    .team-footer .names{color:#edf3fc;font-weight:600;margin-top:.35rem;letter-spacing:.02em}
+    </style>
+    <div class="team-footer">
+      <div>OULAD Insight Lab · Data Warehousing and Data Mining Project</div>
+      <div class="names">Rithish K · Hemanathan R · Sarika Vadakkepat</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__=="__main__":main()
