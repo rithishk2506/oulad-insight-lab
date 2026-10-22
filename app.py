@@ -534,30 +534,87 @@ def olap_workspace(folder):
             st.dataframe(result, use_container_width=True, hide_index=True)
             st.download_button("Download OLAP result", result.to_csv(index=False).encode(), "olap_result.csv", "text/csv")
 
+def _render_star_schema(title, subtitle, fact_name, fact_description, dimensions, accent="#35d5cc"):
+    """Render a self-contained SVG star-schema diagram in Streamlit."""
+    positions = [(390, 35), (35, 205), (745, 205), (390, 390)]
+    fact_x, fact_y, fact_w, fact_h = 355, 218, 290, 112
+    dim_w, dim_h = 220, 104
+    anchors = [(500, 139, 500, fact_y), (255, 257, fact_x, 273),
+               (745, 257, fact_x + fact_w, 273), (500, 390, 500, fact_y + fact_h)]
+    links = "".join(
+        f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="#6b91ad" stroke-width="2.4" stroke-opacity=".9" />'
+        for x1, y1, x2, y2 in anchors
+    )
+    cards = []
+    for i, (dim, pos) in enumerate(zip(dimensions, positions)):
+        x, y = pos
+        name, description, key = dim
+        cards.append(f"""<g>
+          <rect x="{x}" y="{y}" width="{dim_w}" height="{dim_h}" rx="13" fill="#12263a" stroke="#3d6782" stroke-width="1.5"/>
+          <path d="M{x+13} {y} H{x+dim_w-13} Q{x+dim_w} {y} {x+dim_w} {y+13} V{y+8} H{x} V{y+13} Q{x} {y} {x+13} {y}" fill="#1a3a50"/>
+          <text x="{x+16}" y="{y+29}" fill="#8ee7e0" font-size="11" font-weight="700" letter-spacing="1.1">DIMENSION {i+1}</text>
+          <text x="{x+16}" y="{y+52}" fill="#f3f7fb" font-size="16" font-weight="700">{name}</text>
+          <text x="{x+16}" y="{y+72}" fill="#b5c8d8" font-size="11.5">{description}</text>
+          <rect x="{x+13}" y="{y+81}" width="{dim_w-26}" height="17" rx="5" fill="#0b1928"/>
+          <text x="{x+21}" y="{y+93}" fill="#ffd58a" font-size="10.5">PK: {key}</text>
+        </g>""")
+    svg = f"""<div style="margin:12px 0 26px;padding:16px;background:linear-gradient(135deg,#0b1725 0%,#10283b 58%,#101d31 100%);border:1px solid #28445b;border-radius:18px;box-shadow:0 12px 32px rgba(0,0,0,.18)">
+      <div style="display:flex;align-items:flex-start;gap:12px;margin:2px 4px 8px">
+        <div style="width:42px;height:42px;flex:0 0 42px;border-radius:12px;background:#163b4b;border:1px solid #2c6c79;display:flex;align-items:center;justify-content:center;color:{accent};font-size:21px;font-weight:800">✦</div>
+        <div><div style="color:#f3f7fb;font-size:19px;font-weight:800;line-height:1.3">{title}</div><div style="color:#a9bfd0;font-size:12.5px;margin-top:3px">{subtitle}</div></div>
+      </div>
+      <div style="width:100%;overflow-x:auto">
+      <svg viewBox="0 0 1000 520" role="img" aria-label="{title} star schema" style="width:100%;min-width:660px;height:auto;display:block;font-family:Arial,Helvetica,sans-serif">
+        <defs><linearGradient id="factGrad{fact_name}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#164f60"/><stop offset="100%" stop-color="#17304c"/></linearGradient></defs>
+        {links}
+        {''.join(cards)}
+        <g>
+          <rect x="{fact_x}" y="{fact_y}" width="{fact_w}" height="{fact_h}" rx="16" fill="url(#factGrad{fact_name})" stroke="{accent}" stroke-width="2.2"/>
+          <rect x="{fact_x+15}" y="{fact_y+13}" width="95" height="20" rx="6" fill="#0a2532"/>
+          <text x="{fact_x+62}" y="{fact_y+27}" text-anchor="middle" fill="{accent}" font-size="10.5" font-weight="800" letter-spacing="1">FACT TABLE</text>
+          <text x="500" y="{fact_y+57}" text-anchor="middle" fill="#ffffff" font-size="18" font-weight="800">{fact_name}</text>
+          <text x="500" y="{fact_y+78}" text-anchor="middle" fill="#c5d8e5" font-size="11.5">{fact_description}</text>
+          <text x="500" y="{fact_y+97}" text-anchor="middle" fill="#ffdc9c" font-size="10.5">Foreign keys + measurable events</text>
+        </g>
+        <text x="500" y="510" text-anchor="middle" fill="#7f9eb5" font-size="11">1 dimension row → many related fact rows</text>
+      </svg></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 4px 2px;color:#c0d2df;font-size:11.5px">
+        <span style="padding:5px 9px;border:1px solid #34566e;border-radius:7px;background:#0d1d2c">🔑 Dimension primary keys</span>
+        <span style="padding:5px 9px;border:1px solid #34566e;border-radius:7px;background:#0d1d2c">↔ Fact foreign-key relationships</span>
+        <span style="padding:5px 9px;border:1px solid #34566e;border-radius:7px;background:#0d1d2c">★ Central fact table</span>
+      </div>
+    </div>"""
+    st.markdown(svg, unsafe_allow_html=True)
+
+
 def warehouse_explorer():
     st.title("Data Warehouse")
     st.caption("Warehouse model produced by the project's ETL pipeline.")
     st.write("The ETL workflow extracts OULAD source CSVs, validates records and missing values, builds dimensions and fact tables, and writes warehouse outputs to `ETL/output/`.")
     st.markdown("### Warehouse architecture")
-    st.code("""Source OULAD CSVs
-   ├── studentInfo.csv ───────────────┐
-   ├── studentRegistration.csv ───────┤
-   ├── vle.csv ──> dim_vle_resource ──┤
-   ├── assessments.csv -> dim_assessment
-   ├── courses.csv ──> dim_course_presentation
-   ├── studentVle.csv -> fact_vle_interaction
-   └── studentAssessment.csv -> fact_assessment
+    st.write("CourseIQ uses two star schemas: one to analyze VLE engagement and another to analyze assessment performance. Both share student, course-presentation, and time dimensions.")
 
-Dimensions:
-  dim_student
-  dim_course_presentation
-  dim_time
-  dim_vle_resource
-  dim_assessment
+    _render_star_schema(
+        "Star Schema 1 · VLE Engagement",
+        "Analyze clicks and learning-resource activity by student, course presentation, date, and resource.",
+        "fact_vle_interaction", "VLE click / interaction events",
+        [("dim_time", "Date and relative-day lookup", "time_key"),
+         ("dim_student", "Student profile attributes", "student_key"),
+         ("dim_course_presentation", "Module and presentation", "presentation_key"),
+         ("dim_vle_resource", "VLE resource / activity", "vle_key")],
+        accent="#35d5cc",
+    )
+    _render_star_schema(
+        "Star Schema 2 · Assessment Performance",
+        "Analyze assessment scores and submissions by student, assessment, time, and course presentation.",
+        "fact_assessment", "Assessment result / score events",
+        [("dim_time", "Date and relative-day lookup", "time_key"),
+         ("dim_student", "Student profile attributes", "student_key"),
+         ("dim_course_presentation", "Module and presentation", "presentation_key"),
+         ("dim_assessment", "Assessment type and schedule", "assessment_key")],
+        accent="#f4b860",
+    )
 
-Facts:
-  fact_vle_interaction
-  fact_assessment""", language="text")
     st.markdown("### Fact and dimension tables")
     tables = [
         ("dim_student", "Dimension", "Student attributes and student surrogate key", "student_key"),
@@ -569,16 +626,18 @@ Facts:
         ("fact_assessment", "Fact", "Student assessment results and score measures", "student_key, assessment_key, time_key, presentation_key"),
     ]
     st.dataframe(pd.DataFrame(tables, columns=["Table", "Type", "Purpose", "Key(s)"]), use_container_width=True, hide_index=True)
-    st.markdown("### Star-schema relationships")
-    st.write("- `fact_vle_interaction.student_key` → `dim_student.student_key`")
-    st.write("- `fact_vle_interaction.vle_key` → `dim_vle_resource.vle_key`")
-    st.write("- `fact_vle_interaction.time_key` → `dim_time.time_key`")
-    st.write("- `fact_vle_interaction.presentation_key` → `dim_course_presentation.presentation_key`")
-    st.write("- `fact_assessment.student_key` → `dim_student.student_key`")
-    st.write("- `fact_assessment.assessment_key` → `dim_assessment.assessment_key`")
-    st.write("- `fact_assessment.time_key` → `dim_time.time_key`")
-    st.write("- `fact_assessment.presentation_key` → `dim_course_presentation.presentation_key`")
-    st.info("Warehouse outputs are generated by `ETL/oulad_etl.py`. If you add the ETL/output CSVs to the app repository, this page can also show their actual row counts and preview their records.")
+    with st.expander("View relationship details"):
+        st.markdown("**VLE engagement schema**")
+        st.write("- `fact_vle_interaction.student_key` → `dim_student.student_key`")
+        st.write("- `fact_vle_interaction.vle_key` → `dim_vle_resource.vle_key`")
+        st.write("- `fact_vle_interaction.time_key` → `dim_time.time_key`")
+        st.write("- `fact_vle_interaction.presentation_key` → `dim_course_presentation.presentation_key`")
+        st.markdown("**Assessment performance schema**")
+        st.write("- `fact_assessment.student_key` → `dim_student.student_key`")
+        st.write("- `fact_assessment.assessment_key` → `dim_assessment.assessment_key`")
+        st.write("- `fact_assessment.time_key` → `dim_time.time_key`")
+        st.write("- `fact_assessment.presentation_key` → `dim_course_presentation.presentation_key`")
+    st.info("These diagrams visualize the schema defined in this dashboard. Confirm the table names and keys against the actual ETL output before presenting them as the deployed warehouse implementation.")
 
 
 def main():
