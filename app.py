@@ -253,32 +253,78 @@ def main():
     if source == "Local folder":
         folder = st.sidebar.text_input("Dataset folder", find_dir())
     else:
-        st.sidebar.caption("Upload the five OULAD CSV files. Large files may exceed the hosting upload limit.")
+        st.sidebar.caption(
+            "Upload the four smaller CSV files plus studentVle.zip. "
+            "The ZIP must contain studentVle.csv. Each upload must be below 200 MB."
+        )
         uploaded = st.sidebar.file_uploader(
-            "Choose OULAD CSV files",
-            type=["csv"],
+            "Choose OULAD CSV files and studentVle.zip",
+            type=["csv", "zip"],
             accept_multiple_files=True,
-            help="Required: studentInfo.csv, studentVle.csv, vle.csv, assessments.csv, studentAssessment.csv"
+            help="Required: studentInfo.csv, studentVle.zip (containing studentVle.csv), "
+                 "vle.csv, assessments.csv, studentAssessment.csv"
         )
         required_names = ["studentInfo.csv", "studentVle.csv", "vle.csv", "assessments.csv", "studentAssessment.csv"]
         upload_map = {f.name: f for f in uploaded}
-        missing_uploads = [name for name in required_names if name not in upload_map]
+        zip_uploads = [f for f in uploaded if f.name.lower().endswith(".zip")]
+        student_vle_upload = upload_map.get("studentVle.csv")
+        student_vle_zip = next(
+            (f for f in zip_uploads if "studentvle.csv" in zipfile.ZipFile(f).namelist()),
+            None
+        ) if zip_uploads else None
+        missing_uploads = [
+            name for name in required_names
+            if name != "studentVle.csv" and name not in upload_map
+        ]
+        if student_vle_upload is None and student_vle_zip is None:
+            missing_uploads.insert(1, "studentVle.zip (containing studentVle.csv)")
         if missing_uploads:
             st.sidebar.warning("Still needed: " + ", ".join(missing_uploads))
             folder = ""
         else:
-            import tempfile
-            import hashlib
-            upload_signature = hashlib.md5(
-                "|".join(f"{name}:{upload_map[name].size}" for name in required_names).encode()
-            ).hexdigest()
+            upload_sizes = [
+                f"{name}:{upload_map[name].size}"
+                for name in required_names if name in upload_map
+            ]
+            if student_vle_zip is not None:
+                upload_sizes.append(f"studentVle.zip:{student_vle_zip.size}")
+            upload_signature = hashlib.md5("|".join(upload_sizes).encode()).hexdigest()
             folder = str(Path(tempfile.gettempdir()) / ("oulad_upload_" + upload_signature))
-            Path(folder).mkdir(parents=True, exist_ok=True)
+            data_dir = Path(folder)
+            data_dir.mkdir(parents=True, exist_ok=True)
+
             for name in required_names:
-                target = Path(folder) / name
-                if not target.exists() or target.stat().st_size != upload_map[name].size:
-                    target.write_bytes(upload_map[name].getvalue())
-            st.sidebar.success("All five required files are available for this session.")
+                target = data_dir / name
+                if name == "studentVle.csv" and student_vle_upload is None:
+                    if not target.exists():
+                        try:
+                            with zipfile.ZipFile(student_vle_zip) as archive:
+                                member = next(
+                                    n for n in archive.namelist()
+                                    if Path(n).name.lower() == "studentvle.csv"
+                                )
+                                # Stream extraction to avoid holding the 4+ GB CSV in RAM.
+                                with archive.open(member) as source, target.open("wb") as dest:
+                                    while True:
+                                        chunk = source.read(8 * 1024 * 1024)
+                                        if not chunk:
+                                            break
+                                        dest.write(chunk)
+                        except Exception as exc:
+                            st.sidebar.error(f"Could not extract studentVle.csv from ZIP: {exc}")
+                            folder = ""
+                            break
+                elif name in upload_map:
+                    target = data_dir / name
+                    if not target.exists() or target.stat().st_size != upload_map[name].size:
+                        target.write_bytes(upload_map[name].getvalue())
+
+            if folder:
+                st.sidebar.success("All five required files are available for this session.")
+                st.sidebar.warning(
+                    "Resource note: studentVle.csv expands to several GB. Streamlit Cloud may run out "
+                    "of disk space or memory when clustering or mining association rules."
+                )
 
     if st.sidebar.button("Clear cache"):
         st.cache_data.clear()
