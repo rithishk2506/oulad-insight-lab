@@ -247,15 +247,50 @@ def prediction(folder):
 def main():
     st.sidebar.markdown("### ◈ OULAD INSIGHT LAB")
     st.sidebar.caption("DATA MINING · DATA WAREHOUSING")
-    folder=st.sidebar.text_input("Dataset folder",find_dir())
-    if st.sidebar.button("Clear cache"):st.cache_data.clear();st.rerun()
+
+    # Cloud-compatible dataset selection. Local folder mode is retained for desktop use.
+    source = st.sidebar.radio("Dataset source", ["Local folder", "Upload CSV files"])
+    if source == "Local folder":
+        folder = st.sidebar.text_input("Dataset folder", find_dir())
+    else:
+        st.sidebar.caption("Upload the five OULAD CSV files. Large files may exceed the hosting upload limit.")
+        uploaded = st.sidebar.file_uploader(
+            "Choose OULAD CSV files",
+            type=["csv"],
+            accept_multiple_files=True,
+            help="Required: studentInfo.csv, studentVle.csv, vle.csv, assessments.csv, studentAssessment.csv"
+        )
+        required_names = ["studentInfo.csv", "studentVle.csv", "vle.csv", "assessments.csv", "studentAssessment.csv"]
+        upload_map = {f.name: f for f in uploaded}
+        missing_uploads = [name for name in required_names if name not in upload_map]
+        if missing_uploads:
+            st.sidebar.warning("Still needed: " + ", ".join(missing_uploads))
+            folder = ""
+        else:
+            import tempfile
+            import hashlib
+            upload_signature = hashlib.md5(
+                "|".join(f"{name}:{upload_map[name].size}" for name in required_names).encode()
+            ).hexdigest()
+            folder = str(Path(tempfile.gettempdir()) / ("oulad_upload_" + upload_signature))
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            for name in required_names:
+                target = Path(folder) / name
+                if not target.exists() or target.stat().st_size != upload_map[name].size:
+                    target.write_bytes(upload_map[name].getvalue())
+            st.sidebar.success("All five required files are available for this session.")
+
+    if st.sidebar.button("Clear cache"):
+        st.cache_data.clear()
+        st.rerun()
     page=st.sidebar.radio("NAVIGATION",["Overview","Clustering","Classification","Association Rules","Prediction"])
     if page=="Overview":
         st.markdown("<span style='color:#42d6c4;letter-spacing:.15em;font-size:.8rem'>INTERACTIVE ANALYTICS WORKSPACE</span>",unsafe_allow_html=True)
         st.title("OULAD Insight Lab")
         st.write("Explore student outcomes, engagement segments, activity patterns and assessment score predictions.")
-        p=Path(folder); required=["studentInfo.csv","studentVle.csv","vle.csv","assessments.csv","studentAssessment.csv"]
-        found=sum((p/f).exists() for f in required)
+        required=["studentInfo.csv","studentVle.csv","vle.csv","assessments.csv","studentAssessment.csv"]
+        p=Path(folder) if folder else None
+        found=sum((p/f).exists() for f in required) if p else 0
         c=st.columns(4)
         c[0].metric("Required files",f"{found}/{len(required)}")
         c[1].metric("Analytics modules","4")
@@ -272,9 +307,13 @@ def main():
             st.write("**Prediction:** baseline, Linear/Ridge Regression, Decision Tree, Random Forest, Extra Trees")
         with right:
             st.subheader("Dataset readiness")
-            for f in required:st.write(("🟢 " if (p/f).exists() else "🟠 ")+f)
-            if found<5:st.warning("Check the folder path in the sidebar.")
+            for f in required:st.write(("🟢 " if p and (p/f).exists() else "🟠 ")+f)
+            if found<5:
+                st.warning("Choose a valid local dataset folder or upload all five required CSV files in the sidebar.")
         st.caption("Metrics are computed at runtime and can differ from previous experiments because preprocessing and splits may differ.")
+    elif not folder:
+        st.title("Dataset required")
+        st.info("Use the sidebar to select a dataset folder or upload all five required OULAD CSV files.")
     elif page=="Clustering":clustering(folder)
     elif page=="Classification":classifier(folder)
     elif page=="Association Rules":rules(folder)
